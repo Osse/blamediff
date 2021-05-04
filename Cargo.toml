@@ -1,0 +1,11 @@
+[package]
+name = "client"
+version = "0.1.0"
+authors = ["Øystein Walle"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+git-diff = { version = "0.2.0", path = "../gitoxide/git-diff" }
+git-odb = { version = "0.14.0", path = "../gitoxide/git-odb" }
