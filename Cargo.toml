@@ -9,3 +9,5 @@ edition = "2018"
 [dependencies]
 git-diff = { version = "0.2.0", path = "../gitoxide/git-diff" }
 git-odb = { version = "0.14.0", path = "../gitoxide/git-odb" }
+git-hash = { version = "0.3.0", path = "../gitoxide/git-hash" }
+git-object = { version = "0.8.0", path = "../gitoxide/git-object" }
