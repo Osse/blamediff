@@ -7,7 +7,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-git-diff = { version = "0.2.0", path = "../gitoxide/git-diff" }
-git-odb = { version = "0.14.0", path = "../gitoxide/git-odb" }
-git-hash = { version = "0.3.0", path = "../gitoxide/git-hash" }
-git-object = { version = "0.8.0", path = "../gitoxide/git-object" }
+bstr = "*"
+git-diff = { version = "*", path = "../gitoxide/git-diff" }
+git-odb = { version = "*", path = "../gitoxide/git-odb" }
+git-hash = { version = "*", path = "../gitoxide/git-hash" }
+git-object = { version = "*", path = "../gitoxide/git-object" }
+similar = { version = "*", features = ["bytes"] }
+clap = "*"
