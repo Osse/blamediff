@@ -14,3 +14,4 @@ git-hash = { version = "*", path = "../gitoxide/git-hash" }
 git-object = { version = "*", path = "../gitoxide/git-object" }
 similar = { version = "*", features = ["bytes"] }
 clap = "*"
+colored = "*"
