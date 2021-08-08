@@ -10,6 +10,10 @@ fn get_tree<'a>(
         .expect("No object found");
 
     match object.kind {
+        git_object::Kind::Tag => {
+            let t = object.decode().unwrap().into_tag().unwrap();
+            get_tree(db, buffer, &t.target())
+        }
         git_object::Kind::Commit => {
             let c = object.decode().unwrap().into_commit().unwrap();
             get_tree(db, buffer, &c.tree())
