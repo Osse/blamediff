@@ -1,14 +1,25 @@
-fn get_tree_iter2<'a>(
-    db: &git_odb::compound::Db,
+fn get_tree<'a>(
+    db: &git_odb::compound::Store,
     buffer: &'a mut Vec<u8>,
     oid: &git_hash::oid,
-) -> Option<git_object::immutable::tree::TreeIter<'a>> {
+) -> Option<git_odb::data::Object<'a>> {
+    let mut b = Vec::<u8>::new();
     let object = db
-        .find(&oid, buffer, &mut git_odb::pack::cache::Never)
-        .unwrap()
-        .unwrap();
+        .find(&oid, &mut b, &mut git_odb::pack::cache::Never)
+        .expect("db.find() failed")
+        .expect("No object found");
 
-    object.into_tree_iter()
+    match object.kind {
+        git_object::Kind::Commit => {
+            let c = object.decode().unwrap().into_commit().unwrap();
+            get_tree(db, buffer, &c.tree())
+        }
+        git_object::Kind::Tree => {
+            *buffer = b;
+            Some(git_odb::data::Object::new(git_object::Kind::Tree, buffer))
+        }
+        _ => None,
+    }
 }
 
 fn arg_to_obj(s: &String) -> git_hash::ObjectId {
@@ -26,30 +37,40 @@ fn main() {
     let old = arg_to_obj(&args[1]);
     let new = arg_to_obj(&args[2]);
 
-    let mut db = git_odb::compound::Db::at(".git/objects").unwrap();
+    let db = git_odb::compound::Store::at(".git/objects").unwrap();
 
-    let mut buffer = Vec::<u8>::new();
-    let tree_iter = get_tree_iter2(&db, &mut buffer, &old).unwrap();
+    let mut buf_old = Vec::<u8>::new();
+    let mut buf_new = Vec::<u8>::new();
 
-    let mut buffer2 = Vec::<u8>::new();
-    let tree_iter_other = get_tree_iter2(&db, &mut buffer2, &new).unwrap();
+    get_tree(&db, &mut buf_old, &old).expect("get_tree failed");
+    get_tree(&db, &mut buf_new, &new).expect("get_tree failed");
 
-    let state = git_diff::tree::State::<usize>::default();
+    let tree_iter_old = git_object::immutable::tree::TreeIter::from_bytes(&buf_old);
+    let tree_iter_new = git_object::immutable::tree::TreeIter::from_bytes(&buf_new);
+
+    let state = git_diff::tree::State::default();
     let mut recorder = git_diff::tree::Recorder::default();
 
-    let changes = git_diff::tree::Changes::from(tree_iter);
+    let changes = git_diff::tree::Changes::from(tree_iter_old);
 
     changes.needed_to_obtain(
-        tree_iter_other,
+        tree_iter_new,
         state,
-        |id, buf| get_tree_iter2(&db, buf, id),
+        |id, buf| {
+            let object = db
+                .find(&id, buf, &mut git_odb::pack::cache::Never)
+                .expect("db.find() failed")
+                .expect("No object found");
+
+            object.into_tree_iter()
+        },
         &mut recorder,
     );
 
     print_patch(&db, &recorder);
 }
 
-fn print_patch(db: &git_odb::compound::Db, recorder: &git_diff::tree::Recorder) {
+fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorder) {
     for c in &recorder.records {
         match c {
             git_diff::tree::recorder::Change::Addition { .. } => (),
@@ -67,7 +88,7 @@ fn print_patch(db: &git_odb::compound::Db, recorder: &git_diff::tree::Recorder) 
 }
 
 fn diff_blobs(
-    db: &git_odb::compound::Db,
+    db: &git_odb::compound::Store,
     old_oid: &git_hash::ObjectId,
     new_oid: &git_hash::ObjectId,
     path: &bstr::BString,
