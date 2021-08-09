@@ -115,7 +115,6 @@ fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorde
                 oid,
                 path,
             } => { diff_blobs(db, previous_oid, oid, path); () },
-            git_diff::tree::recorder::Change::Modification { .. } => (),
         }
     }
 }
