@@ -1,3 +1,28 @@
+#[derive(Debug)]
+enum BlameDiffError {
+    BadArgs,
+    OpenRepository(git_odb::compound::init::Error),
+    DiffGeneration(git_diff::tree::changes::Error),
+}
+
+impl From<git_diff::tree::changes::Error> for BlameDiffError {
+    fn from(e: git_diff::tree::changes::Error) -> Self {
+        BlameDiffError::DiffGeneration(e)
+    }
+}
+
+impl From<git_odb::compound::init::Error> for BlameDiffError {
+    fn from(e: git_odb::compound::init::Error) -> Self {
+        BlameDiffError::OpenRepository(e)
+    }
+}
+
+impl From<git_hash::decode::Error> for BlameDiffError {
+    fn from(_e: git_hash::decode::Error) -> Self {
+        BlameDiffError::BadArgs
+    }
+}
+
 fn get_tree<'a>(
     db: &git_odb::compound::Store,
     buffer: &'a mut Vec<u8>,
@@ -11,11 +36,11 @@ fn get_tree<'a>(
 
     match object.kind {
         git_object::Kind::Tag => {
-            let t = object.decode().unwrap().into_tag().unwrap();
+            let t = object.decode().ok()?.into_tag()?;
             get_tree(db, buffer, &t.target())
         }
         git_object::Kind::Commit => {
-            let c = object.decode().unwrap().into_commit().unwrap();
+            let c = object.decode().ok()?.into_commit()?;
             get_tree(db, buffer, &c.tree())
         }
         git_object::Kind::Tree => {
@@ -26,22 +51,17 @@ fn get_tree<'a>(
     }
 }
 
-fn arg_to_obj(s: &String) -> git_hash::ObjectId {
-    git_hash::ObjectId::from_hex(s.as_bytes()).unwrap()
-}
-
-fn main() {
+fn main() -> Result<(), BlameDiffError> {
     let args = std::env::args().collect::<Vec<String>>();
 
     if args.len() < 3 {
-        eprintln!("Need two treeishes");
-        return;
+        return Err(BlameDiffError::BadArgs);
     }
 
-    let old = arg_to_obj(&args[1]);
-    let new = arg_to_obj(&args[2]);
+    let old = git_hash::ObjectId::from_hex(args[1].as_bytes())?;
+    let new = git_hash::ObjectId::from_hex(args[2].as_bytes())?;
 
-    let db = git_odb::compound::Store::at(".git/objects").unwrap();
+    let db = git_odb::compound::Store::at(".git/objects")?;
 
     let mut buf_old = Vec::<u8>::new();
     let mut buf_new = Vec::<u8>::new();
@@ -69,9 +89,11 @@ fn main() {
             object.into_tree_iter()
         },
         &mut recorder,
-    );
+    )?;
 
     print_patch(&db, &recorder);
+
+    Ok(())
 }
 
 fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorder) {
