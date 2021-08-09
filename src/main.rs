@@ -160,7 +160,7 @@ fn diff_blobs(
         for change in hunk.iter_changes() {
             match change.tag() {
                 similar::ChangeTag::Delete => print!("{}", format!("-{}", change).red()),
-                similar::ChangeTag::Insert => print!("{}", format!("-{}", change).green()),
+                similar::ChangeTag::Insert => print!("{}", format!("+{}", change).green()),
                 similar::ChangeTag::Equal => print!(" {}", change),
             };
         }
