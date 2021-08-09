@@ -2,12 +2,13 @@
 enum BlameDiffError {
     BadArgs,
     OpenRepository(git_odb::compound::init::Error),
+    FindObject(git_odb::compound::find::Error),
     DiffGeneration(git_diff::tree::changes::Error),
 }
 
-impl From<git_diff::tree::changes::Error> for BlameDiffError {
-    fn from(e: git_diff::tree::changes::Error) -> Self {
-        BlameDiffError::DiffGeneration(e)
+impl From<git_hash::decode::Error> for BlameDiffError {
+    fn from(_e: git_hash::decode::Error) -> Self {
+        BlameDiffError::BadArgs
     }
 }
 
@@ -17,9 +18,15 @@ impl From<git_odb::compound::init::Error> for BlameDiffError {
     }
 }
 
-impl From<git_hash::decode::Error> for BlameDiffError {
-    fn from(_e: git_hash::decode::Error) -> Self {
-        BlameDiffError::BadArgs
+impl From<git_diff::tree::changes::Error> for BlameDiffError {
+    fn from(e: git_diff::tree::changes::Error) -> Self {
+        BlameDiffError::DiffGeneration(e)
+    }
+}
+
+impl From<git_odb::compound::find::Error> for BlameDiffError {
+    fn from(e: git_odb::compound::find::Error) -> Self {
+        BlameDiffError::FindObject(e)
     }
 }
 
@@ -107,7 +114,7 @@ fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorde
                 entry_mode: git_object::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => diff_blobs(db, previous_oid, oid, path),
+            } => { diff_blobs(db, previous_oid, oid, path); () },
             git_diff::tree::recorder::Change::Modification { .. } => (),
         }
     }
@@ -118,11 +125,11 @@ fn diff_blobs(
     old_oid: &git_hash::ObjectId,
     new_oid: &git_hash::ObjectId,
     path: &bstr::BString,
-) {
+) -> Result<(), BlameDiffError> {
     let mut old_buf = Vec::<u8>::new();
     let old_blob = db
         .find(&old_oid, &mut old_buf, &mut git_odb::pack::cache::Never)
-        .expect("Bad result")
+        ?
         .expect("None")
         .decode()
         .expect("Could not decode")
@@ -132,7 +139,7 @@ fn diff_blobs(
     let mut new_buf = Vec::<u8>::new();
     let new_blob = db
         .find(&new_oid, &mut new_buf, &mut git_odb::pack::cache::Never)
-        .expect("Bad result")
+        ?
         .expect("None")
         .decode()
         .expect("Could not decode")
@@ -165,4 +172,6 @@ fn diff_blobs(
             };
         }
     }
+
+    Ok(())
 }
