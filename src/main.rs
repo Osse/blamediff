@@ -1,3 +1,5 @@
+mod blame;
+
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
@@ -100,10 +102,12 @@ fn main() -> Result<(), BlameDiffError> {
 
     print_patch(&db, &recorder);
 
+    let mut sb = blame::Scoreboard::new();
+
     Ok(())
 }
 
-fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorder) {
+fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorder) -> Result<(), BlameDiffError> {
     for c in &recorder.records {
         match c {
             git_diff::tree::recorder::Change::Addition { .. } => (),
@@ -114,9 +118,12 @@ fn print_patch(db: &git_odb::compound::Store, recorder: &git_diff::tree::Recorde
                 entry_mode: git_object::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => { diff_blobs(db, previous_oid, oid, path); () },
+            } => diff_blobs(db, previous_oid, oid, path)?,
+            git_diff::tree::recorder::Change::Modification { .. } => (),
         }
     }
+
+    Ok(())
 }
 
 fn diff_blobs(
@@ -127,8 +134,7 @@ fn diff_blobs(
 ) -> Result<(), BlameDiffError> {
     let mut old_buf = Vec::<u8>::new();
     let old_blob = db
-        .find(&old_oid, &mut old_buf, &mut git_odb::pack::cache::Never)
-        ?
+        .find(&old_oid, &mut old_buf, &mut git_odb::pack::cache::Never)?
         .expect("None")
         .decode()
         .expect("Could not decode")
@@ -137,8 +143,7 @@ fn diff_blobs(
 
     let mut new_buf = Vec::<u8>::new();
     let new_blob = db
-        .find(&new_oid, &mut new_buf, &mut git_odb::pack::cache::Never)
-        ?
+        .find(&new_oid, &mut new_buf, &mut git_odb::pack::cache::Never)?
         .expect("None")
         .decode()
         .expect("Could not decode")
