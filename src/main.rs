@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+#![allow(dead_code)]
 mod blame;
 
 #[derive(Debug)]
