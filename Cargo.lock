@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "git-actor"
-version = "0.1.1"
+version = "0.3.3"
 dependencies = [
  "bstr",
  "btoi",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "git-diff"
-version = "0.4.0"
+version = "0.8.2"
 dependencies = [
  "git-hash",
  "git-object",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "git-features"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "git-hash"
-version = "0.4.0"
+version = "0.5.1"
 dependencies = [
  "hex",
  "quick-error",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "git-object"
-version = "0.10.0"
+version = "0.12.2"
 dependencies = [
  "bstr",
  "git-actor",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "git-odb"
-version = "0.16.0"
+version = "0.20.2"
 dependencies = [
  "btoi",
  "git-features",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "git-pack"
-version = "0.2.0"
+version = "0.8.2"
 dependencies = [
  "btoi",
  "byteorder",
@@ -275,17 +275,29 @@ dependencies = [
  "git-features",
  "git-hash",
  "git-object",
+ "git-tempfile",
  "git-traverse",
  "itoa",
  "parking_lot",
  "smallvec",
- "tempfile",
  "thiserror",
 ]
 
 [[package]]
+name = "git-tempfile"
+version = "0.6.1"
+dependencies = [
+ "dashmap",
+ "libc",
+ "once_cell",
+ "signal-hook",
+ "signal-hook-registry",
+ "tempfile",
+]
+
+[[package]]
 name = "git-traverse"
-version = "0.3.0"
+version = "0.7.2"
 dependencies = [
  "git-hash",
  "git-object",
@@ -294,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "git-validate"
-version = "0.3.0"
+version = "0.5.2"
 dependencies = [
  "bstr",
  "quick-error",
@@ -344,9 +356,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.94"
+version = "0.2.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18794a8ad5b29321f790b55d93dfba91e125cb1a9edbd4f8e3150acc771c1a5e"
+checksum = "a7f823d141fe0a24df1e23b4af4e3c7ba9e5966ec514ea068c93024aa7deb765"
 
 [[package]]
 name = "lock_api"
@@ -403,6 +415,12 @@ dependencies = [
  "hermit-abi",
  "libc",
 ]
+
+[[package]]
+name = "once_cell"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "692fcb63b64b1758029e0a96ee63e049ce8c5948587f2f7208df04625e5f6b56"
 
 [[package]]
 name = "parking_lot"
@@ -563,6 +581,25 @@ name = "sha1"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2579985fda508104f7587689507983eadd6a6e84dd35d6d115361f530916fa0d"
+
+[[package]]
+name = "signal-hook"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "470c5a6397076fae0094aaf06a08e6ba6f37acb77d3b1b91ea92b4d6c8650c39"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51e73328dc4ac0c7ccbda3a494dfa03df1de2f46018127f60c693f2648455b0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "similar"
