@@ -5,7 +5,9 @@ mod blame;
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
+    DiscoverError(git_repository::repository::discover::Error),
     OpenRepository(git_odb::compound::init::Error),
+    GetDatabase,
     FindObject(git_odb::compound::find::Error),
     DiffGeneration(git_diff::tree::changes::Error),
 }
@@ -13,6 +15,12 @@ enum BlameDiffError {
 impl From<git_hash::decode::Error> for BlameDiffError {
     fn from(_e: git_hash::decode::Error) -> Self {
         BlameDiffError::BadArgs
+    }
+}
+
+impl From<git_repository::repository::discover::Error> for BlameDiffError {
+    fn from(e: git_repository::repository::discover::Error) -> Self {
+        BlameDiffError::DiscoverError(e)
     }
 }
 
@@ -72,7 +80,9 @@ fn main() -> Result<(), BlameDiffError> {
     let old = git_hash::ObjectId::from_hex(args[1].as_bytes())?;
     let new = git_hash::ObjectId::from_hex(args[2].as_bytes())?;
 
-    let db = git_odb::compound::Store::at(".git/objects")?;
+    let repo = git_repository::Repository::discover(".")?;
+
+    let db = &repo.odb.dbs.first().ok_or(BlameDiffError::GetDatabase)?;
 
     let mut buf_old = Vec::<u8>::new();
     let mut buf_new = Vec::<u8>::new();

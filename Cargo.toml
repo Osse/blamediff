@@ -12,6 +12,7 @@ git-diff = { version = "*", path = "../gitoxide/git-diff" }
 git-odb = { version = "*", path = "../gitoxide/git-odb" }
 git-hash = { version = "*", path = "../gitoxide/git-hash" }
 git-object = { version = "*", path = "../gitoxide/git-object" }
+git-repository = { version = "*", path = "../gitoxide/git-repository" }
 similar = { version = "*", features = ["bytes"] }
 clap = "*"
 colored = "*"
