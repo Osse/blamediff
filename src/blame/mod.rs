@@ -35,8 +35,8 @@ pub struct Origin
 
 pub struct Scoreboard<'a>
 {
-    commit: git_object::immutable::Commit<'a>,
-    commits: std::collections::BinaryHeap<(u32, git_object::immutable::Commit<'a>)>, // struct prio_queue
+    final_: git_object::CommitRef<'a>,
+    commits: std::collections::BinaryHeap<(u32, git_object::CommitRef<'a>)>, // struct prio_queue
     // repo: &str, // struct repository
     // revs: &str, // struct rev_info
     // path: &str,
@@ -56,9 +56,9 @@ pub struct Scoreboard<'a>
     move_score: u32,
     copy_score: u32,
 
-    // contents_from: &str,
+    // contents_from: &str, // --contents-from, not interesting
 
-    reverse: i32,
+    // reverse: i32, // --reverse flag, not interesting
     show_root: i32,
     xdl_opts: i32,
     no_whole_file_rename: i32,
@@ -73,10 +73,10 @@ pub struct Scoreboard<'a>
 }
 
 impl<'a> Scoreboard<'a> {
-    pub fn new() -> Scoreboard<'a> {
+    pub fn new(i: ScoreboardInit) -> Scoreboard<'a> {
         Scoreboard {
-            commit: git_object::immutable::commit::Commit::from_bytes(b"lol").unwrap(),
-            commits: std::collections::BinaryHeap::<(u32, git_object::immutable::commit::Commit)>::new(),
+            final_: git_object::CommitRef::from_bytes(b"lol").unwrap(),
+            commits: std::collections::BinaryHeap::<(u32, git_object::CommitRef)>::new(),
             ent: Vec::<Entry>::new(),
             num_lines: 0,
             lineno: 0,
@@ -85,7 +85,6 @@ impl<'a> Scoreboard<'a> {
             num_commits: 0,
             move_score: 0,
             copy_score: 0,
-            reverse: 0,
             show_root: 0,
             xdl_opts: 0,
             no_whole_file_rename: 0,
@@ -96,4 +95,13 @@ impl<'a> Scoreboard<'a> {
             bloom_data: BloomData::new(),
         }
     }
+
+    pub fn setup(&self, final_: &str, path: &str) {
+
+    }
+}
+
+pub struct ScoreboardInit {
+    pub final_: i32,
+    pub path: std::path::PathBuf,
 }
