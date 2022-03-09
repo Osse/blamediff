@@ -5,49 +5,34 @@ mod blame;
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
-    GetDatabase,
     DiscoverError(git_repository::discover::Error),
-    OpenRepository(git_odb::compound::init::Error),
-    FindObject(git_repository::object::peel::to_kind::Error),
-    FindObject2(git_odb::store::find::Error),
+    PeelError(git_repository::object::peel::to_kind::Error),
+    FindObject(git_odb::store::find::Error),
     DiffGeneration(git_diff::tree::changes::Error),
 }
 
-impl From<git_hash::decode::Error> for BlameDiffError {
-    fn from(_e: git_hash::decode::Error) -> Self {
-        BlameDiffError::BadArgs
+macro_rules! error {
+    ($e:ty, $b:expr) => {
+        impl From<$e> for BlameDiffError {
+            fn from(_e: $e) -> Self {
+                $b
+            }
+        }
+    };
+    ($e:ty, $b:expr, $f:literal) => {
+        impl From<$e> for BlameDiffError {
+            fn from(e: $e) -> Self {
+                $b(e)
+            }
+        }
     }
 }
 
-impl From<git_repository::discover::Error> for BlameDiffError {
-    fn from(e: git_repository::discover::Error) -> Self {
-        BlameDiffError::DiscoverError(e)
-    }
-}
-
-impl From<git_odb::compound::init::Error> for BlameDiffError {
-    fn from(e: git_odb::compound::init::Error) -> Self {
-        BlameDiffError::OpenRepository(e)
-    }
-}
-
-impl From<git_diff::tree::changes::Error> for BlameDiffError {
-    fn from(e: git_diff::tree::changes::Error) -> Self {
-        BlameDiffError::DiffGeneration(e)
-    }
-}
-
-impl From<git_repository::object::peel::to_kind::Error> for BlameDiffError {
-    fn from(e: git_repository::object::peel::to_kind::Error) -> Self {
-        BlameDiffError::FindObject(e)
-    }
-}
-
-impl From<git_odb::store::find::Error> for BlameDiffError {
-    fn from(e: git_odb::store::find::Error) -> Self {
-        BlameDiffError::FindObject2(e)
-    }
-}
+error![git_hash::decode::Error, BlameDiffError::BadArgs];
+error![git_repository::discover::Error, BlameDiffError::DiscoverError, 1];
+error![git_diff::tree::changes::Error, BlameDiffError::DiffGeneration, 1];
+error![git_repository::object::peel::to_kind::Error, BlameDiffError::PeelError, 1];
+error![git_odb::store::find::Error, BlameDiffError::FindObject, 1];
 
 fn main() -> Result<(), BlameDiffError> {
     let args = std::env::args().collect::<Vec<String>>();
