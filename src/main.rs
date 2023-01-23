@@ -1,6 +1,9 @@
 #![allow(unused_must_use)]
 #![allow(dead_code)]
 
+mod diff;
+use diff::UnifiedDiffBuilder;
+
 use clap::Parser;
 
 #[derive(Debug)]
@@ -173,7 +176,7 @@ fn diff_blobs(
     let diff = git_diff::blob::diff(
         git_diff::blob::Algorithm::Histogram,
         &input,
-        git_diff::blob::UnifiedDiffBuilder::new(&input),
+        UnifiedDiffBuilder::new(&input),
     );
 
     println!("--- a/{0}\n+++ b/{0}\n{1}", path, diff);
