@@ -75,6 +75,9 @@ struct Args {
     /// Old commit to diff
     #[arg(short, long)]
     new: bstr::BString,
+
+    /// Paths to filter on
+    paths: Vec<bstr::BString>,
 }
 
 fn resolve_tree<'a>(
