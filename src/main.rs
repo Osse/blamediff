@@ -131,18 +131,30 @@ fn print_patch(
     repo: &git_repository::Repository,
     recorder: &git_diff::tree::Recorder,
 ) -> Result<(), BlameDiffError> {
+    use git_diff::tree::recorder::Change::*;
+
     for c in &recorder.records {
         match c {
-            git_diff::tree::recorder::Change::Addition { .. } => (),
-            git_diff::tree::recorder::Change::Deletion { .. } => (),
-            git_diff::tree::recorder::Change::Modification {
+            Addition {
+                entry_mode: git_object::tree::EntryMode::Blob,
+                oid,
+                path,
+            } => diff_blob_with_null(repo, oid, path, false)?,
+            Addition { .. } => (),
+            Deletion {
+                entry_mode: git_object::tree::EntryMode::Blob,
+                oid,
+                path,
+            } => diff_blob_with_null(repo, oid, path, true)?,
+            Deletion { .. } => (),
+            Modification {
                 previous_entry_mode: git_object::tree::EntryMode::Blob,
                 previous_oid,
                 entry_mode: git_object::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blobs(repo, previous_oid, oid, path)?,
-            git_diff::tree::recorder::Change::Modification { .. } => (),
+            Modification { .. } => (),
         }
     }
 
@@ -157,6 +169,34 @@ fn get_blob<'a>(
         .ok_or(BlameDiffError::BadArgs)?
         .peel_to_kind(git_object::Kind::Blob)
         .map_err(|_| BlameDiffError::BadArgs)
+}
+
+fn diff_blob_with_null(
+    repo: &git_repository::Repository,
+    oid: &git_hash::ObjectId,
+    path: &bstr::BString,
+    to_null: bool,
+) -> Result<(), BlameDiffError> {
+    let blob = get_blob(repo, oid)?;
+    let file = std::str::from_utf8(&blob.data).unwrap();
+
+    let input = if to_null {
+        println!("--- a/{}\n+++ /dev/null", path);
+        git_diff::blob::intern::InternedInput::new(file, "")
+    } else {
+        println!("--- /dev/null\n+++ b/{}", path);
+        git_diff::blob::intern::InternedInput::new("", file)
+    };
+
+    let diff = git_diff::blob::diff(
+        git_diff::blob::Algorithm::Histogram,
+        &input,
+        UnifiedDiffBuilder::new(&input),
+    );
+
+    print!("{}", diff);
+
+    Ok(())
 }
 
 fn diff_blobs(
