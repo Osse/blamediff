@@ -143,13 +143,25 @@ fn print_patch(
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path, false)?,
-            Addition { .. } => (),
+            Addition {
+                entry_mode,
+                oid,
+                path,
+            } => {
+                dbg!("Addition", entry_mode, oid, path);
+            }
             Deletion {
                 entry_mode: git_object::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path, true)?,
-            Deletion { .. } => (),
+            Deletion {
+                entry_mode,
+                oid,
+                path,
+            } => {
+                dbg!("Deletion", entry_mode, oid, path);
+            }
             Modification {
                 previous_entry_mode: git_object::tree::EntryMode::Blob,
                 previous_oid,
@@ -157,7 +169,22 @@ fn print_patch(
                 oid,
                 path,
             } => diff_blobs(repo, previous_oid, oid, path)?,
-            Modification { .. } => (),
+            Modification {
+                previous_entry_mode,
+                previous_oid,
+                entry_mode,
+                oid,
+                path,
+            } => {
+                dbg!(
+                    "Modification",
+                    previous_entry_mode,
+                    previous_oid,
+                    entry_mode,
+                    oid,
+                    path
+                );
+            }
         }
     }
 
