@@ -7,9 +7,8 @@ use git_diff::blob::Sink;
 
 /// A [`Sink`](crate::sink::Sink) that creates a textual diff
 /// in the format typically output by git or gnu-diff if the `-u` option is used
-pub struct UnifiedDiffBuilder<'a, W, T>
+pub struct UnifiedDiffBuilder<'a, T>
 where
-    W: Write,
     T: Hash + Eq + Display,
 {
     before: &'a [Token],
@@ -23,10 +22,10 @@ where
     after_hunk_len: u32,
 
     buffer: String,
-    dst: W,
+    dst: String,
 }
 
-impl<'a, T> UnifiedDiffBuilder<'a, String, T>
+impl<'a, T> UnifiedDiffBuilder<'a, T>
 where
     T: Hash + Eq + Display,
 {
@@ -40,29 +39,6 @@ where
             after_hunk_len: 0,
             buffer: String::with_capacity(8),
             dst: String::new(),
-            interner: &input.interner,
-            before: &input.before,
-            after: &input.after,
-            pos: 0,
-        }
-    }
-}
-
-impl<'a, W, T> UnifiedDiffBuilder<'a, W, T>
-where
-    W: Write,
-    T: Hash + Eq + Display,
-{
-    /// Create a new `UnifiedDiffBuilder` for the given `input`,
-    /// that will writes it output to the provided implementation of [`Write`](std::fmt::Write).
-    pub fn with_writer(input: &'a InternedInput<T>, writer: W) -> Self {
-        Self {
-            before_hunk_start: 0,
-            after_hunk_start: 0,
-            before_hunk_len: 0,
-            after_hunk_len: 0,
-            buffer: String::with_capacity(8),
-            dst: writer,
             interner: &input.interner,
             before: &input.before,
             after: &input.after,
@@ -108,12 +84,11 @@ where
     }
 }
 
-impl<W, T> Sink for UnifiedDiffBuilder<'_, W, T>
+impl<T> Sink for UnifiedDiffBuilder<'_, T>
 where
-    W: Write,
     T: Hash + Eq + Display,
 {
-    type Out = W;
+    type Out = String;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         if before.start - self.pos > 6 {
