@@ -142,12 +142,7 @@ dependencies = [
 name = "client"
 version = "0.1.0"
 dependencies = [
- "bstr",
  "clap",
- "git-diff",
- "git-hash",
- "git-object",
- "git-odb",
  "git-repository",
 ]
 

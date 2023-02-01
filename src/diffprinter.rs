@@ -2,8 +2,8 @@ use std::fmt::{Display, Write};
 use std::hash::Hash;
 use std::ops::Range;
 
-use git_diff::blob::intern::{InternedInput, Interner, Token};
-use git_diff::blob::Sink;
+use git_repository::diff::blob::intern::{InternedInput, Interner, Token};
+use git_repository::diff::blob::Sink;
 
 /// A [`Sink`](crate::sink::Sink) that creates a textual diff
 /// in the format typically output by git or gnu-diff if the `-u` option is used

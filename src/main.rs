@@ -1,20 +1,23 @@
 #![allow(unused_must_use)]
 #![allow(dead_code)]
 
-mod diff;
+mod diffprinter;
 
-use bstr::ByteSlice;
-use diff::UnifiedDiffBuilder;
+use diffprinter::UnifiedDiffBuilder;
+use git_repository::bstr;
+use git_repository::bstr::ByteSlice;
 
 use clap::Parser;
+
+use git_repository::{diff, hash, index, object, objs, Repository};
 
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
     DiscoverError(git_repository::discover::Error),
-    PeelError(git_repository::object::peel::to_kind::Error),
+    PeelError(object::peel::to_kind::Error),
     FindObject(git_odb::store::find::Error),
-    DiffGeneration(git_diff::tree::changes::Error),
+    DiffGeneration(diff::tree::changes::Error),
     Io(std::io::Error),
 }
 
@@ -46,7 +49,7 @@ macro_rules! make_error {
     };
 }
 
-make_error![git_hash::decode::Error, BlameDiffError::BadArgs];
+make_error![hash::decode::Error, BlameDiffError::BadArgs];
 make_error![
     git_repository::revision::spec::parse::Error,
     BlameDiffError::BadArgs
@@ -57,7 +60,7 @@ make_error![
     1
 ];
 make_error![
-    git_diff::tree::changes::Error,
+    diff::tree::changes::Error,
     BlameDiffError::DiffGeneration,
     1
 ];
@@ -85,7 +88,7 @@ struct Args {
 }
 
 fn resolve_tree<'a>(
-    repo: &'a git_repository::Repository,
+    repo: &'a Repository,
     object: &bstr::BString,
 ) -> Result<git_repository::Object<'a>, BlameDiffError> {
     let o: &bstr::BStr = object.as_ref();
@@ -103,16 +106,16 @@ fn main() -> Result<(), BlameDiffError> {
 
     let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
     let old = resolve_tree(&repo, &old)?;
-    let tree_iter_old = git_object::TreeRefIter::from_bytes(&old.data);
+    let tree_iter_old = objs::TreeRefIter::from_bytes(&old.data);
 
     match args.new {
         Some(arg) => {
             let new = resolve_tree(&repo, &arg)?;
-            let tree_iter_new = git_object::TreeRefIter::from_bytes(&new.data);
-            let state = git_diff::tree::State::default();
-            let mut recorder = git_diff::tree::Recorder::default();
+            let tree_iter_new = objs::TreeRefIter::from_bytes(&new.data);
+            let state = diff::tree::State::default();
+            let mut recorder = diff::tree::Recorder::default();
 
-            let changes = git_diff::tree::Changes::from(tree_iter_old);
+            let changes = diff::tree::Changes::from(tree_iter_old);
 
             changes.needed_to_obtain(
                 tree_iter_new,
@@ -120,10 +123,10 @@ fn main() -> Result<(), BlameDiffError> {
                 |id, buf| {
                     let object = repo.try_find_object(id)?.ok_or(BlameDiffError::BadArgs)?;
                     match object.kind {
-                        git_repository::object::Kind::Tree => {
+                        object::Kind::Tree => {
                             buf.clear();
                             buf.extend(object.data.iter());
-                            Ok(git_object::TreeRefIter::from_bytes(buf))
+                            Ok(objs::TreeRefIter::from_bytes(buf))
                         }
                         _ => Err(BlameDiffError::BadArgs),
                     }
@@ -144,13 +147,13 @@ fn main() -> Result<(), BlameDiffError> {
 
                     let blob = get_blob(&repo, &e.id)?;
                     let blob_contents = std::str::from_utf8(&blob.data).unwrap();
-                    let input = git_diff::blob::intern::InternedInput::new(
+                    let input = diff::blob::intern::InternedInput::new(
                         disk_contents.as_str(),
                         blob_contents,
                     );
 
-                    let diff = git_diff::blob::diff(
-                        git_diff::blob::Algorithm::Histogram,
+                    let diff = diff::blob::diff(
+                        diff::blob::Algorithm::Histogram,
                         &input,
                         UnifiedDiffBuilder::new(&input),
                     );
@@ -166,10 +169,7 @@ fn main() -> Result<(), BlameDiffError> {
     Ok(())
 }
 
-fn disk_newer_than_index(
-    stat: &git_repository::index::entry::Stat,
-    path: &std::path::Path,
-) -> bool {
+fn disk_newer_than_index(stat: &index::entry::Stat, path: &std::path::Path) -> bool {
     let fs_stat = std::fs::symlink_metadata(path).expect("able to lstat() file");
 
     (stat.mtime.secs as u64)
@@ -181,16 +181,13 @@ fn disk_newer_than_index(
             .as_secs()
 }
 
-fn print_patch(
-    repo: &git_repository::Repository,
-    recorder: &git_diff::tree::Recorder,
-) -> Result<(), BlameDiffError> {
-    use git_diff::tree::recorder::Change::*;
+fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(), BlameDiffError> {
+    use diff::tree::recorder::Change::*;
 
     for c in &recorder.records {
         match c {
             Addition {
-                entry_mode: git_object::tree::EntryMode::Blob,
+                entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path, false)?,
@@ -202,7 +199,7 @@ fn print_patch(
                 dbg!("Addition", entry_mode, oid, path);
             }
             Deletion {
-                entry_mode: git_object::tree::EntryMode::Blob,
+                entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path, true)?,
@@ -214,9 +211,9 @@ fn print_patch(
                 dbg!("Deletion", entry_mode, oid, path);
             }
             Modification {
-                previous_entry_mode: git_object::tree::EntryMode::Blob,
+                previous_entry_mode: objs::tree::EntryMode::Blob,
                 previous_oid,
-                entry_mode: git_object::tree::EntryMode::Blob,
+                entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blobs(repo, previous_oid, oid, path)?,
@@ -243,18 +240,18 @@ fn print_patch(
 }
 
 fn get_blob<'a>(
-    repo: &'a git_repository::Repository,
-    oid: &git_hash::ObjectId,
+    repo: &'a Repository,
+    oid: &hash::ObjectId,
 ) -> Result<git_repository::Object<'a>, BlameDiffError> {
     repo.try_find_object(*oid)?
         .ok_or(BlameDiffError::BadArgs)?
-        .peel_to_kind(git_object::Kind::Blob)
+        .peel_to_kind(object::Kind::Blob)
         .map_err(|_| BlameDiffError::BadArgs)
 }
 
 fn diff_blob_with_null(
-    repo: &git_repository::Repository,
-    oid: &git_hash::ObjectId,
+    repo: &Repository,
+    oid: &hash::ObjectId,
     path: &bstr::BString,
     to_null: bool,
 ) -> Result<(), BlameDiffError> {
@@ -263,14 +260,14 @@ fn diff_blob_with_null(
 
     let input = if to_null {
         println!("--- a/{}\n+++ /dev/null", path);
-        git_diff::blob::intern::InternedInput::new(file, "")
+        diff::blob::intern::InternedInput::new(file, "")
     } else {
         println!("--- /dev/null\n+++ b/{}", path);
-        git_diff::blob::intern::InternedInput::new("", file)
+        diff::blob::intern::InternedInput::new("", file)
     };
 
-    let diff = git_diff::blob::diff(
-        git_diff::blob::Algorithm::Histogram,
+    let diff = diff::blob::diff(
+        diff::blob::Algorithm::Histogram,
         &input,
         UnifiedDiffBuilder::new(&input),
     );
@@ -281,9 +278,9 @@ fn diff_blob_with_null(
 }
 
 fn diff_blobs(
-    repo: &git_repository::Repository,
-    old_oid: &git_hash::ObjectId,
-    new_oid: &git_hash::ObjectId,
+    repo: &Repository,
+    old_oid: &hash::ObjectId,
+    new_oid: &hash::ObjectId,
     path: &bstr::BString,
 ) -> Result<(), BlameDiffError> {
     let old = get_blob(repo, old_oid)?;
@@ -292,10 +289,10 @@ fn diff_blobs(
     let old_file = std::str::from_utf8(&old.data).unwrap();
     let new_file = std::str::from_utf8(&new.data).unwrap();
 
-    let input = git_diff::blob::intern::InternedInput::new(old_file, new_file);
+    let input = diff::blob::intern::InternedInput::new(old_file, new_file);
 
-    let diff = git_diff::blob::diff(
-        git_diff::blob::Algorithm::Histogram,
+    let diff = diff::blob::diff(
+        diff::blob::Algorithm::Histogram,
         &input,
         UnifiedDiffBuilder::new(&input),
     );
