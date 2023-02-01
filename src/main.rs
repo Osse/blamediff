@@ -9,16 +9,19 @@ use git_repository::bstr::ByteSlice;
 
 use clap::Parser;
 
-use git_repository::{diff, hash, index, object, objs, Repository};
+use git_repository::{diff, discover, hash, index, object, objs, odb, revision, Repository};
 
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
+    Decode(hash::decode::Error),
     DiscoverError(git_repository::discover::Error),
     PeelError(object::peel::to_kind::Error),
-    FindObject(git_odb::store::find::Error),
+    FindObject(odb::store::find::Error),
     DiffGeneration(diff::tree::changes::Error),
     Io(std::io::Error),
+    SystemTime(std::time::SystemTimeError),
+    Parse(git_repository::revision::spec::parse::Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
@@ -35,13 +38,6 @@ impl std::error::Error for BlameDiffError {}
 macro_rules! make_error {
     ($e:ty, $b:expr) => {
         impl From<$e> for BlameDiffError {
-            fn from(_e: $e) -> Self {
-                $b
-            }
-        }
-    };
-    ($e:ty, $b:expr, $f:literal) => {
-        impl From<$e> for BlameDiffError {
             fn from(e: $e) -> Self {
                 $b(e)
             }
@@ -49,28 +45,14 @@ macro_rules! make_error {
     };
 }
 
-make_error![hash::decode::Error, BlameDiffError::BadArgs];
-make_error![
-    git_repository::revision::spec::parse::Error,
-    BlameDiffError::BadArgs
-];
-make_error![
-    git_repository::discover::Error,
-    BlameDiffError::DiscoverError,
-    1
-];
-make_error![
-    diff::tree::changes::Error,
-    BlameDiffError::DiffGeneration,
-    1
-];
-make_error![
-    git_repository::object::peel::to_kind::Error,
-    BlameDiffError::PeelError,
-    1
-];
-make_error![git_odb::store::find::Error, BlameDiffError::FindObject, 1];
-make_error![std::io::Error, BlameDiffError::Io, 1];
+make_error![hash::decode::Error, BlameDiffError::Decode];
+make_error![revision::spec::parse::Error, BlameDiffError::Parse];
+make_error![discover::Error, BlameDiffError::DiscoverError];
+make_error![diff::tree::changes::Error, BlameDiffError::DiffGeneration];
+make_error![object::peel::to_kind::Error, BlameDiffError::PeelError];
+make_error![odb::store::find::Error, BlameDiffError::FindObject];
+make_error![std::io::Error, BlameDiffError::Io];
+make_error![std::time::SystemTimeError, BlameDiffError::SystemTime];
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -102,7 +84,7 @@ fn resolve_tree<'a>(
 fn main() -> Result<(), BlameDiffError> {
     let args = Args::parse();
 
-    let repo = git_repository::discover(".")?;
+    let repo = discover(".")?;
 
     let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
     let old = resolve_tree(&repo, &old)?;
@@ -142,7 +124,7 @@ fn main() -> Result<(), BlameDiffError> {
                 let p = e.path(&index).to_str().unwrap();
                 let path = std::path::Path::new(p);
 
-                if disk_newer_than_index(&e.stat, path) {
+                if disk_newer_than_index(&e.stat, path)? {
                     let disk_contents = std::fs::read_to_string(path)?;
 
                     let blob = get_blob(&repo, &e.id)?;
@@ -169,16 +151,17 @@ fn main() -> Result<(), BlameDiffError> {
     Ok(())
 }
 
-fn disk_newer_than_index(stat: &index::entry::Stat, path: &std::path::Path) -> bool {
-    let fs_stat = std::fs::symlink_metadata(path).expect("able to lstat() file");
+fn disk_newer_than_index(
+    stat: &index::entry::Stat,
+    path: &std::path::Path,
+) -> Result<bool, BlameDiffError> {
+    let fs_stat = std::fs::symlink_metadata(path)?;
 
-    (stat.mtime.secs as u64)
+    Ok((stat.mtime.secs as u64)
         < fs_stat
-            .modified()
-            .expect("file has modification time")
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .expect("elapsed")
-            .as_secs()
+            .modified()?
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)?
+            .as_secs())
 }
 
 fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(), BlameDiffError> {
