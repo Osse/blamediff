@@ -2,6 +2,8 @@
 #![allow(dead_code)]
 
 mod diff;
+
+use bstr::ByteSlice;
 use diff::UnifiedDiffBuilder;
 
 use clap::Parser;
@@ -13,6 +15,7 @@ enum BlameDiffError {
     PeelError(git_repository::object::peel::to_kind::Error),
     FindObject(git_odb::store::find::Error),
     DiffGeneration(git_diff::tree::changes::Error),
+    Io(std::io::Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
@@ -64,17 +67,18 @@ make_error![
     1
 ];
 make_error![git_odb::store::find::Error, BlameDiffError::FindObject, 1];
+make_error![std::io::Error, BlameDiffError::Io, 1];
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Old commit to diff
     #[arg(short, long)]
-    old: bstr::BString,
+    old: Option<bstr::BString>,
 
     /// Old commit to diff
     #[arg(short, long)]
-    new: bstr::BString,
+    new: Option<bstr::BString>,
 
     /// Paths to filter on
     paths: Vec<bstr::BString>,
@@ -97,37 +101,84 @@ fn main() -> Result<(), BlameDiffError> {
 
     let repo = git_repository::discover(".")?;
 
-    let old = resolve_tree(&repo, &args.old)?;
-    let new = resolve_tree(&repo, &args.new)?;
-
+    let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
+    let old = resolve_tree(&repo, &old)?;
     let tree_iter_old = git_object::TreeRefIter::from_bytes(&old.data);
-    let tree_iter_new = git_object::TreeRefIter::from_bytes(&new.data);
 
-    let state = git_diff::tree::State::default();
-    let mut recorder = git_diff::tree::Recorder::default();
+    match args.new {
+        Some(arg) => {
+            let new = resolve_tree(&repo, &arg)?;
+            let tree_iter_new = git_object::TreeRefIter::from_bytes(&new.data);
+            let state = git_diff::tree::State::default();
+            let mut recorder = git_diff::tree::Recorder::default();
 
-    let changes = git_diff::tree::Changes::from(tree_iter_old);
+            let changes = git_diff::tree::Changes::from(tree_iter_old);
 
-    changes.needed_to_obtain(
-        tree_iter_new,
-        state,
-        |id, buf| {
-            let object = repo.try_find_object(id)?.ok_or(BlameDiffError::BadArgs)?;
-            match object.kind {
-                git_repository::object::Kind::Tree => {
-                    buf.clear();
-                    buf.extend(object.data.iter());
-                    Ok(git_object::TreeRefIter::from_bytes(buf))
+            changes.needed_to_obtain(
+                tree_iter_new,
+                state,
+                |id, buf| {
+                    let object = repo.try_find_object(id)?.ok_or(BlameDiffError::BadArgs)?;
+                    match object.kind {
+                        git_repository::object::Kind::Tree => {
+                            buf.clear();
+                            buf.extend(object.data.iter());
+                            Ok(git_object::TreeRefIter::from_bytes(buf))
+                        }
+                        _ => Err(BlameDiffError::BadArgs),
+                    }
+                },
+                &mut recorder,
+            )?;
+
+            print_patch(&repo, &recorder);
+        }
+        None => {
+            let index = repo.open_index().unwrap();
+            for e in index.entries() {
+                let p = e.path(&index).to_str().unwrap();
+                let path = std::path::Path::new(p);
+
+                if disk_newer_than_index(&e.stat, path) {
+                    let disk_contents = std::fs::read_to_string(path)?;
+
+                    let blob = get_blob(&repo, &e.id)?;
+                    let blob_contents = std::str::from_utf8(&blob.data).unwrap();
+                    let input = git_diff::blob::intern::InternedInput::new(
+                        disk_contents.as_str(),
+                        blob_contents,
+                    );
+
+                    let diff = git_diff::blob::diff(
+                        git_diff::blob::Algorithm::Histogram,
+                        &input,
+                        UnifiedDiffBuilder::new(&input),
+                    );
+
+                    if !diff.is_empty() {
+                        print!("--- a/{0}\n+++ b/{0}\n{1}", p, diff);
+                    }
                 }
-                _ => Err(BlameDiffError::BadArgs),
             }
-        },
-        &mut recorder,
-    )?;
-
-    print_patch(&repo, &recorder);
+        }
+    }
 
     Ok(())
+}
+
+fn disk_newer_than_index(
+    stat: &git_repository::index::entry::Stat,
+    path: &std::path::Path,
+) -> bool {
+    let fs_stat = std::fs::symlink_metadata(path).expect("able to lstat() file");
+
+    (stat.mtime.secs as u64)
+        < fs_stat
+            .modified()
+            .expect("file has modification time")
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .expect("elapsed")
+            .as_secs()
 }
 
 fn print_patch(
