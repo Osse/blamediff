@@ -73,13 +73,15 @@ struct Args {
 
 fn resolve_tree<'a>(
     repo: &'a Repository,
-    object: &bstr::BString,
-) -> Result<git_repository::Object<'a>, BlameDiffError> {
-    let o: &bstr::BStr = object.as_ref();
-    let old = repo.rev_parse(o)?.single().ok_or(BlameDiffError::BadArgs)?;
-    repo.try_find_object(old)?
+    object: &bstr::BStr,
+) -> Result<Object<'a>, BlameDiffError> {
+    let object = repo
+        .rev_parse(object)?
+        .single()
+        .ok_or(BlameDiffError::BadArgs)?;
+    repo.try_find_object(object)?
         .ok_or(BlameDiffError::BadArgs)?
-        .peel_to_kind(git_repository::object::Kind::Tree)
+        .peel_to_kind(object::Kind::Tree)
         .map_err(|_| BlameDiffError::BadArgs)
 }
 
@@ -89,12 +91,12 @@ fn main() -> Result<(), BlameDiffError> {
     let repo = discover(".")?;
 
     let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
-    let old = resolve_tree(&repo, &old)?;
+    let old = resolve_tree(&repo, old.as_ref())?;
     let tree_iter_old = objs::TreeRefIter::from_bytes(&old.data);
 
     match args.new {
         Some(arg) => {
-            let new = resolve_tree(&repo, &arg)?;
+            let new = resolve_tree(&repo, arg.as_ref())?;
             let tree_iter_new = objs::TreeRefIter::from_bytes(&new.data);
             let state = diff::tree::State::default();
             let mut recorder = diff::tree::Recorder::default();
@@ -175,7 +177,7 @@ fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(),
                 entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => diff_blob_with_null(repo, oid, path, false)?,
+            } => diff_blob_with_null(repo, oid, path.as_ref(), false)?,
             Addition {
                 entry_mode,
                 oid,
@@ -187,7 +189,7 @@ fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(),
                 entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => diff_blob_with_null(repo, oid, path, true)?,
+            } => diff_blob_with_null(repo, oid, path.as_ref(), true)?,
             Deletion {
                 entry_mode,
                 oid,
@@ -201,7 +203,7 @@ fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(),
                 entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => diff_blobs(repo, previous_oid, oid, path)?,
+            } => diff_blobs(repo, previous_oid, oid, path.as_ref())?,
             Modification {
                 previous_entry_mode,
                 previous_oid,
@@ -224,10 +226,7 @@ fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(),
     Ok(())
 }
 
-fn get_blob<'a>(
-    repo: &'a Repository,
-    oid: &hash::ObjectId,
-) -> Result<git_repository::Object<'a>, BlameDiffError> {
+fn get_blob<'a>(repo: &'a Repository, oid: &hash::ObjectId) -> Result<Object<'a>, BlameDiffError> {
     repo.try_find_object(*oid)?
         .ok_or(BlameDiffError::BadArgs)?
         .peel_to_kind(object::Kind::Blob)
@@ -237,7 +236,7 @@ fn get_blob<'a>(
 fn diff_blob_with_null(
     repo: &Repository,
     oid: &hash::ObjectId,
-    path: &bstr::BString,
+    path: &bstr::BStr,
     to_null: bool,
 ) -> Result<(), BlameDiffError> {
     let blob = get_blob(repo, oid)?;
@@ -266,7 +265,7 @@ fn diff_blobs(
     repo: &Repository,
     old_oid: &hash::ObjectId,
     new_oid: &hash::ObjectId,
-    path: &bstr::BString,
+    path: &bstr::BStr,
 ) -> Result<(), BlameDiffError> {
     let old = get_blob(repo, old_oid)?;
     let new = get_blob(repo, new_oid)?;
