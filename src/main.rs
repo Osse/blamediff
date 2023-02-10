@@ -9,19 +9,21 @@ use git_repository::bstr::ByteSlice;
 
 use clap::Parser;
 
-use git_repository::{diff, discover, hash, index, object, objs, odb, revision, Repository};
+use git_repository::{
+    diff, discover, hash, index, object, objs, odb, revision, Object, Repository,
+};
 
 #[derive(Debug)]
 enum BlameDiffError {
     BadArgs,
     Decode(hash::decode::Error),
-    DiscoverError(git_repository::discover::Error),
+    DiscoverError(discover::Error),
     PeelError(object::peel::to_kind::Error),
     FindObject(odb::store::find::Error),
     DiffGeneration(diff::tree::changes::Error),
     Io(std::io::Error),
     SystemTime(std::time::SystemTimeError),
-    Parse(git_repository::revision::spec::parse::Error),
+    Parse(revision::spec::parse::Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
