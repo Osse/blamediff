@@ -132,8 +132,8 @@ fn main() -> Result<(), BlameDiffError> {
                     let blob = get_blob(&repo, &e.id)?;
                     let blob_contents = std::str::from_utf8(&blob.data).unwrap();
                     let input = diff::blob::intern::InternedInput::new(
-                        disk_contents.as_str(),
                         blob_contents,
+                        disk_contents.as_str(),
                     );
 
                     let diff = diff::blob::diff(
