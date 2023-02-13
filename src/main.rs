@@ -178,48 +178,19 @@ fn print_patch(repo: &Repository, recorder: &diff::tree::Recorder) -> Result<(),
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path.as_ref(), false)?,
-            Addition {
-                entry_mode,
-                oid,
-                path,
-            } => {
-                dbg!("Addition", entry_mode, oid, path);
-            }
             Deletion {
                 entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
             } => diff_blob_with_null(repo, oid, path.as_ref(), true)?,
-            Deletion {
-                entry_mode,
-                oid,
-                path,
-            } => {
-                dbg!("Deletion", entry_mode, oid, path);
-            }
             Modification {
                 previous_entry_mode: objs::tree::EntryMode::Blob,
                 previous_oid,
                 entry_mode: objs::tree::EntryMode::Blob,
                 oid,
                 path,
-            } => diff_blobs(repo, previous_oid, oid, path.as_ref())?,
-            Modification {
-                previous_entry_mode,
-                previous_oid,
-                entry_mode,
-                oid,
-                path,
-            } => {
-                dbg!(
-                    "Modification",
-                    previous_entry_mode,
-                    previous_oid,
-                    entry_mode,
-                    oid,
-                    path
-                );
-            }
+            } => diff_two_blobs(repo, previous_oid, oid, path.as_ref())?,
+            x => { dbg!(x); }
         }
     }
 
@@ -261,7 +232,7 @@ fn diff_blob_with_null(
     Ok(())
 }
 
-fn diff_blobs(
+fn diff_two_blobs(
     repo: &Repository,
     old_oid: &hash::ObjectId,
     new_oid: &hash::ObjectId,
