@@ -6,57 +6,15 @@ mod diffprinter;
 use std::path::PathBuf;
 
 use diffprinter::UnifiedDiffBuilder;
-use git_repository::bstr;
-use git_repository::bstr::ByteSlice;
+use gix::bstr;
+use gix::bstr::ByteSlice;
 
 use clap::Parser;
 
-use git_repository::{
-    diff, discover, hash, index, object, objs, odb, revision, Object, Repository,
-};
+use gix::{diff, discover, hash, index, object, objs, Object, Repository};
 
-#[derive(Debug)]
-enum BlameDiffError {
-    BadArgs,
-    Decode(hash::decode::Error),
-    DiscoverError(discover::Error),
-    PeelError(object::peel::to_kind::Error),
-    FindObject(odb::store::find::Error),
-    DiffGeneration(diff::tree::changes::Error),
-    Io(std::io::Error),
-    SystemTime(std::time::SystemTimeError),
-    Parse(revision::spec::parse::Error),
-}
-
-impl std::fmt::Display for BlameDiffError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BlameDiffError::BadArgs => write!(f, "Bad args"),
-            _ => write!(f, "other badness"),
-        }
-    }
-}
-
-impl std::error::Error for BlameDiffError {}
-
-macro_rules! make_error {
-    ($e:ty, $b:expr) => {
-        impl From<$e> for BlameDiffError {
-            fn from(e: $e) -> Self {
-                $b(e)
-            }
-        }
-    };
-}
-
-make_error![hash::decode::Error, BlameDiffError::Decode];
-make_error![revision::spec::parse::Error, BlameDiffError::Parse];
-make_error![discover::Error, BlameDiffError::DiscoverError];
-make_error![diff::tree::changes::Error, BlameDiffError::DiffGeneration];
-make_error![object::peel::to_kind::Error, BlameDiffError::PeelError];
-make_error![odb::store::find::Error, BlameDiffError::FindObject];
-make_error![std::io::Error, BlameDiffError::Io];
-make_error![std::time::SystemTimeError, BlameDiffError::SystemTime];
+mod error;
+use error::BlameDiffError;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
