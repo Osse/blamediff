@@ -16,6 +16,8 @@ use gix::{diff, discover, hash, index, object, objs, Object, Repository};
 mod error;
 use error::BlameDiffError;
 
+mod log;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
