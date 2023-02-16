@@ -67,8 +67,6 @@ fn main() -> Result<(), BlameDiffError> {
         .map(|p| prefix.join(p))
         .collect::<Vec<_>>();
 
-    dbg!(&paths);
-
     let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
     let old = resolve_tree(&repo, old.as_ref())?;
     let tree_iter_old = objs::TreeRefIter::from_bytes(&old.data);
@@ -132,7 +130,6 @@ fn diff_two_trees(
         Addition { path, .. } | Deletion { path, .. } | Modification { path, .. } => {
             let p: &[u8] = path.as_ref();
             let p = PathBuf::from(std::str::from_utf8(p).expect("valid path"));
-            dbg!(&p);
 
             paths.is_empty() || paths.contains(&p)
         }
