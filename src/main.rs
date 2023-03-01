@@ -63,23 +63,24 @@ fn main() -> Result<(), BlameDiffError> {
 
     let prefix = repo.prefix().expect("have worktree")?;
 
-    let paths = args
+    let owned_paths: Vec<bstr::BString> = args
         .paths
         .into_iter()
         .map(|p| prefix.join(p))
+        .map(|p| bstr::BString::new(p.to_str().unwrap().as_bytes().to_owned()))
         .collect::<Vec<_>>();
 
+    let paths = owned_paths.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+
     let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
-    let old = resolve_tree(&repo, old.as_ref())?;
-    let tree_iter_old = objs::TreeRefIter::from_bytes(&old.data);
+    let old = resolve_tree(&repo, old.as_ref())?.into_tree();
 
     if let Some(arg) = args.new {
-        let new = resolve_tree(&repo, arg.as_ref())?;
-        let tree_iter_new = objs::TreeRefIter::from_bytes(&new.data);
+        let new = resolve_tree(&repo, arg.as_ref())?.into_tree();
 
-        diff_two_trees(&repo, tree_iter_old, tree_iter_new, paths);
+        diff_two_trees(old, new, &paths);
     } else {
-        diff_with_disk(&repo, paths);
+        diff_with_disk(&repo, &paths);
     }
 
     Ok(())
@@ -98,80 +99,55 @@ fn disk_newer_than_index(
             .as_secs())
 }
 
-fn diff_two_trees(
-    repo: &Repository,
-    tree_iter_old: objs::TreeRefIter,
-    tree_iter_new: objs::TreeRefIter,
-    paths: Vec<PathBuf>,
+fn diff_two_trees<'a, 'b>(
+    tree_old: gix::Tree<'a>,
+    tree_new: gix::Tree<'b>,
+    paths: &[&bstr::BStr],
 ) -> Result<(), BlameDiffError> {
-    let state = diff::tree::State::default();
-    let mut recorder = diff::tree::Recorder::default();
+    let mut platform = tree_old.changes().unwrap();
 
-    let changes = diff::tree::Changes::from(tree_iter_old);
+    platform.track_path();
 
-    changes.needed_to_obtain(
-        tree_iter_new,
-        state,
-        |id, buf| {
-            let object = repo.try_find_object(id)?.ok_or(BlameDiffError::BadArgs)?;
-            match object.kind {
-                object::Kind::Tree => {
-                    buf.clear();
-                    buf.extend(object.data.iter());
-                    Ok(objs::TreeRefIter::from_bytes(buf))
+    platform.for_each_to_obtain_tree(&tree_new, |c| {
+        use object::tree::diff::change::Event::*;
+        let path = c.location;
+        if paths.is_empty() || paths.iter().any(|&p| p == path) {
+            match c.event {
+                Addition {
+                    entry_mode: objs::tree::EntryMode::Blob,
+                    id,
+                } => diff_blob_with_null(id, c.location, false),
+                Deletion {
+                    entry_mode: objs::tree::EntryMode::Blob,
+                    id,
+                } => diff_blob_with_null(id, c.location, true),
+                Modification {
+                    previous_entry_mode: objs::tree::EntryMode::Blob,
+                    previous_id,
+                    entry_mode: objs::tree::EntryMode::Blob,
+                    id,
+                } => diff_two_blobs(previous_id, id, c.location),
+                x => {
+                    dbg!(x);
+                    Ok(())
                 }
-                _ => Err(BlameDiffError::BadArgs),
             }
-        },
-        &mut recorder,
-    )?;
-
-    use diff::tree::recorder::Change::*;
-
-    let iter = recorder.records.into_iter().filter(|c| match c {
-        Addition { path, .. } | Deletion { path, .. } | Modification { path, .. } => {
-            let p: &[u8] = path.as_ref();
-            let p = PathBuf::from(std::str::from_utf8(p).expect("valid path"));
-
-            paths.is_empty() || paths.contains(&p)
+            .map(|()| object::tree::diff::Action::Continue)
+        } else {
+            Ok(object::tree::diff::Action::Continue)
         }
     });
-
-    for c in iter {
-        match c {
-            Addition {
-                entry_mode: objs::tree::EntryMode::Blob,
-                oid,
-                path,
-            } => diff_blob_with_null(repo, oid, path.as_ref(), false)?,
-            Deletion {
-                entry_mode: objs::tree::EntryMode::Blob,
-                oid,
-                path,
-            } => diff_blob_with_null(repo, oid, path.as_ref(), true)?,
-            Modification {
-                previous_entry_mode: objs::tree::EntryMode::Blob,
-                previous_oid,
-                entry_mode: objs::tree::EntryMode::Blob,
-                oid,
-                path,
-            } => diff_two_blobs(repo, previous_oid, oid, path.as_ref())?,
-            x => {
-                dbg!(x);
-            }
-        }
-    }
-
     Ok(())
 }
 
-fn diff_with_disk(repo: &Repository, paths: Vec<PathBuf>) -> Result<(), BlameDiffError> {
+fn diff_with_disk(repo: &Repository, paths: &[&bstr::BStr]) -> Result<(), BlameDiffError> {
     let index = repo.open_index().unwrap();
     for e in index.entries() {
-        let p = e.path(&index).to_str().unwrap();
-        let path = std::path::Path::new(p);
+        let p = e.path(&index);
 
-        if paths.is_empty() || paths.iter().any(|p| p == path) {
+        if paths.is_empty() || paths.iter().any(|&pp| pp == p) {
+            let path = std::path::Path::new(p.to_str().unwrap());
+
             if disk_newer_than_index(&e.stat, path)? {
                 let disk_contents = std::fs::read_to_string(path)?;
 
@@ -197,13 +173,12 @@ fn diff_with_disk(repo: &Repository, paths: Vec<PathBuf>) -> Result<(), BlameDif
 }
 
 fn diff_blob_with_null(
-    repo: &Repository,
-    oid: hash::ObjectId,
+    id: gix::Id,
     path: &bstr::BStr,
     to_null: bool,
 ) -> Result<(), BlameDiffError> {
-    let blob = get_object(repo, oid, object::Kind::Blob)?;
-    let file = std::str::from_utf8(&blob.data).unwrap();
+    let data = &id.object().unwrap().data;
+    let file = std::str::from_utf8(&data).unwrap();
 
     let input = if to_null {
         println!("--- a/{}\n+++ /dev/null", path);
@@ -225,16 +200,15 @@ fn diff_blob_with_null(
 }
 
 fn diff_two_blobs(
-    repo: &Repository,
-    old_oid: hash::ObjectId,
-    new_oid: hash::ObjectId,
+    old_id: gix::Id,
+    new_id: gix::Id,
     path: &bstr::BStr,
 ) -> Result<(), BlameDiffError> {
-    let old = get_object(repo, old_oid, object::Kind::Blob)?;
-    let new = get_object(repo, new_oid, object::Kind::Blob)?;
+    let old_data = &old_id.object().unwrap().data;
+    let new_data = &new_id.object().unwrap().data;
 
-    let old_file = std::str::from_utf8(&old.data).expect("valid UTF-8");
-    let new_file = std::str::from_utf8(&new.data).expect("valid UTF-8");
+    let old_file = std::str::from_utf8(&old_data).expect("valid UTF-8");
+    let new_file = std::str::from_utf8(&new_data).expect("valid UTF-8");
 
     let input = diff::blob::intern::InternedInput::new(old_file, new_file);
 
