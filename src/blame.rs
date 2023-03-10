@@ -20,19 +20,44 @@ pub enum Error {
 }
 
 #[derive(Debug)]
+struct Line {
+    line: String,
+    offset: u32,
+    commit: Option<gix::ObjectId>,
+}
+
+#[derive(Debug)]
 struct IncompleteBlame {
-    x: std::collections::HashMap<usize, Option<gix::ObjectId>>,
+    x: std::collections::BTreeMap<u32, Line>,
+    lines: u32,
 }
 
 impl IncompleteBlame {
-    fn new(file_len: usize) -> Self {
+    fn new(contents: String) -> Self {
+        let mut x = std::collections::BTreeMap::new();
+        for (line_number, line) in contents.lines().enumerate() {
+            x.insert(
+                (line_number + 1) as u32,
+                Line {
+                    line: line.to_owned(),
+                    offset: 0,
+                    commit: None,
+                },
+            );
+        }
+
         Self {
-            x: std::collections::HashMap::new(),
+            x,
+            lines: contents.lines().count() as u32,
         }
     }
 
     fn assign(&mut self, line: u32, id: gix::ObjectId) {
-        self.x.insert((line as usize), Some(id));
+        if let Some(l) = self.x.get_mut(&line) {
+            if l.commit.is_none() {
+                l.commit = Some(id);
+            }
+        }
     }
 
     fn assign_range(&mut self, lines: Range<u32>, id: gix::ObjectId) {
@@ -42,67 +67,26 @@ impl IncompleteBlame {
     }
 
     fn is_complete(&self) -> bool {
-        self.x.iter().all(|(a, b)| b.is_some())
+        self.x.values().all(|l| l.commit.is_some())
     }
 
     fn finish(self) -> Blame {
-        dbg!(&self.x);
-        let mut blame = Blame(vec![]);
-        let mut iter = self.x.into_iter().map(|(a, b)| b.unwrap()).enumerate();
-        let (mut l, mut first) = iter.next().unwrap();
+        let v = self
+            .x
+            .values()
+            .map(|l| {
+                l.commit
+                    .unwrap_or(gix::ObjectId::empty_blob(hash::Kind::Sha1))
+            })
+            .collect::<Vec<_>>();
 
-        for (ll, i) in iter {
-            if i != first {
-                blame.0.push(Span {
-                    lines: l as u32..ll as u32,
-                    commit: i,
-                });
-
-                l = ll + 1;
-                first = i;
-            }
-        }
-
-        blame
+        Blame(v)
     }
 }
 
 /// A Blame is a set of spans
 #[derive(Debug)]
-pub struct Blame(Vec<Span>);
-
-#[derive(Debug)]
-/// A range of lines in the input file that is attributed to the given commit
-pub struct Span {
-    pub lines: Range<u32>,
-    pub commit: gix::ObjectId,
-}
-
-#[derive(Debug)]
-struct State {
-    head: gix::ObjectId,
-    state: String,
-    incomplete_blame: IncompleteBlame,
-}
-
-impl State {
-    fn new(_p: &Path, n: usize, head: gix::Id) -> Self {
-        State {
-            head: head.detach(),
-            state: String::new(),
-            incomplete_blame: IncompleteBlame::new(n),
-        }
-    }
-
-    /// Has blamed all lines
-    fn is_complete(&self) -> bool {
-        self.incomplete_blame.is_complete()
-    }
-
-    fn finish(mut self) -> Blame {
-        self.incomplete_blame.finish()
-    }
-}
+pub struct Blame(Vec<gix::ObjectId>);
 
 struct Collector<'a> {
     interner: &'a Interner<&'a str>,
@@ -135,7 +119,7 @@ pub fn blame_file(path: &Path) -> Result<Blame, Error> {
 
     let head = repo.rev_parse("HEAD").unwrap().single().unwrap();
 
-    let old_data = head
+    let blob = head
         .object()
         .unwrap()
         .peel_to_tree()
@@ -148,10 +132,9 @@ pub fn blame_file(path: &Path) -> Result<Blame, Error> {
         .peel_to_kind(gix::object::Kind::Blob)
         .unwrap();
 
-    let n = String::from_utf8_lossy(&old_data.data).lines().count();
-    dbg!(n);
+    let contents = String::from_utf8(blob.data.clone()).expect("Valid UTF-8");
 
-    let mut state = State::new(path, n, head);
+    let mut blame_state = IncompleteBlame::new(contents.clone());
 
     let mut iter = repo
         .rev_walk(std::iter::once(head))
@@ -159,38 +142,38 @@ pub fn blame_file(path: &Path) -> Result<Blame, Error> {
         .unwrap()
         .peekable();
 
-    while let Some(c_id) = iter.next() {
-        if state.is_complete() {
+    while let Some(Ok(c_id)) = iter.next() {
+        if blame_state.is_complete() {
             break;
         }
-        let c_id = c_id.unwrap();
 
-        let c = repo
+        let commit = repo
             .find_object(c_id)
             .unwrap()
             .peel_to_kind(object::Kind::Commit)
             .unwrap()
             .into_commit();
 
-        let e = c.tree().unwrap().lookup_entry_by_path(path).unwrap();
+        if let Some(tree_entry) = commit.tree().unwrap().lookup_entry_by_path(path).unwrap() {
+            if let Some(Ok(prev_commit_id)) = iter.peek() {
+                let prev_commit_id = prev_commit_id.as_ref();
 
-        if let Some(e) = e {
-            if let Some(aa) = iter.peek() {
-                let aa = aa.as_ref().unwrap();
-
-                let cc = repo
-                    .find_object(*aa)
+                let prev_commit = repo
+                    .find_object(prev_commit_id)
                     .unwrap()
                     .peel_to_kind(object::Kind::Commit)
                     .unwrap()
                     .into_commit();
 
-                let ee = cc.tree().unwrap().lookup_entry_by_path(path).unwrap();
-
-                if let Some(ee) = ee {
-                    if e.object_id() != ee.object_id() {
-                        let old = &ee.object().unwrap().data;
-                        let new = &e.object().unwrap().data;
+                if let Some(prev_tree_entry) = prev_commit
+                    .tree()
+                    .unwrap()
+                    .lookup_entry_by_path(path)
+                    .unwrap()
+                {
+                    if tree_entry.object_id() != prev_tree_entry.object_id() {
+                        let old = &prev_tree_entry.object().unwrap().data;
+                        let new = &tree_entry.object().unwrap().data;
 
                         let old_file = std::str::from_utf8(&old).expect("valid UTF-8");
                         let new_file = std::str::from_utf8(&new).expect("valid UTF-8");
@@ -200,26 +183,26 @@ pub fn blame_file(path: &Path) -> Result<Blame, Error> {
                         let ranges = diff(Algorithm::Histogram, &input, Collector::new(&input));
 
                         for (_before, after) in ranges.into_iter() {
-                            state.incomplete_blame.assign_range(after, c_id.detach());
+                            blame_state.assign_range(after, c_id.detach());
                         }
                     }
                 }
             } else {
-                // Root commit
-                let new = &e.object().unwrap().data;
-                let new_file = std::str::from_utf8(&new).expect("valid UTF-8");
-                let input = InternedInput::new("", new_file);
-
-                let ranges = diff(Algorithm::Histogram, &input, Collector::new(&input));
-
-                for (_before, after) in ranges.into_iter() {
-                    state.incomplete_blame.assign_range(after, c_id.detach());
-                }
+                // File doesn't exist in previous commit
+                // Attribute remainling lines to this commit
+                blame_state.assign_range(1..(blame_state.lines as u32 + 1), c_id.detach());
             }
+        } else {
+            // File doesn't exist in current commit
+            break;
         }
     }
 
-    dbg!(&state.incomplete_blame);
+    let b = blame_state.finish();
 
-    Ok(state.finish())
+    for (a, b) in contents.lines().zip(b.0.iter()) {
+        println!("{} {}", b, a);
+    }
+
+    Ok(b)
 }

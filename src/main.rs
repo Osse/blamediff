@@ -65,7 +65,6 @@ fn main() -> Result<(), BlameDiffError> {
     let prefix = repo.prefix().expect("have worktree")?;
 
     let b = blame::blame_file(&args.paths[0]);
-    dbg!(b);
     return Ok(());
 
     let owned_paths: Vec<bstr::BString> = args
