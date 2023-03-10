@@ -16,6 +16,7 @@ use gix::{diff, discover, hash, index, object, objs, Object, Repository};
 mod error;
 use error::BlameDiffError;
 
+mod blame;
 mod log;
 
 #[derive(Parser)]
@@ -62,6 +63,10 @@ fn main() -> Result<(), BlameDiffError> {
     let repo = discover(".")?;
 
     let prefix = repo.prefix().expect("have worktree")?;
+
+    let b = blame::blame_file(&args.paths[0]);
+    dbg!(b);
+    return Ok(());
 
     let owned_paths: Vec<bstr::BString> = args
         .paths
