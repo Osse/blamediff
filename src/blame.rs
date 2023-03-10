@@ -42,7 +42,7 @@ impl IncompleteBlame {
     }
 
     fn is_complete(&self) -> bool {
-        !self.x.iter().any(|(a, b)| b.is_none())
+        self.x.iter().all(|(a, b)| b.is_some())
     }
 
     fn finish(self) -> Blame {
