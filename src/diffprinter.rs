@@ -23,6 +23,9 @@ where
 
     buffer: String,
     dst: String,
+
+    before_blob: crate::BlobData<'a>,
+    after_blob: crate::BlobData<'a>,
 }
 
 impl<'a, T> UnifiedDiffBuilder<'a, T>
@@ -31,7 +34,11 @@ where
 {
     /// Create a new `UnifiedDiffBuilder` for the given `input`,
     /// that will return a [`String`](std::string::String).
-    pub fn new(input: &'a InternedInput<T>) -> Self {
+    pub fn new(
+        input: &'a InternedInput<T>,
+        old_blob: crate::BlobData<'a>,
+        new_blob: crate::BlobData<'a>,
+    ) -> Self {
         Self {
             before_hunk_start: 0,
             after_hunk_start: 0,
@@ -43,6 +50,8 @@ where
             before: &input.before,
             after: &input.after,
             pos: 0,
+            before_blob: old_blob,
+            after_blob: new_blob,
         }
     }
 
@@ -62,13 +71,18 @@ where
 
         writeln!(
             &mut self.dst,
-            "@@ -{},{} +{},{} @@",
+            "diff --git a/{0} b/{1}\nindex {2}..{3} 100644\n--- a/{0}\n+++ b/{1}\n@@ -{4},{5} +{6},{7} @@",
+            self.before_blob.path,
+            self.after_blob.path,
+            self.before_blob.id.to_hex_with_len(7),
+            self.after_blob.id.to_hex_with_len(7),
             self.before_hunk_start + 1,
             self.before_hunk_len,
             self.after_hunk_start + 1,
             self.after_hunk_len,
         )
         .unwrap();
+
         write!(&mut self.dst, "{}", &self.buffer).unwrap();
         self.buffer.clear();
         self.before_hunk_len = 0;

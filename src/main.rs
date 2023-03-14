@@ -83,6 +83,18 @@ fn main() -> Result<(), BlameDiffError> {
     }
 }
 
+pub struct BlobData<'a> {
+    path: &'a bstr::BStr,
+    id: gix::ObjectId,
+}
+pub const fn literal(x: &[u8]) -> &bstr::BStr {
+    unsafe { core::mem::transmute(x) }
+}
+const DEV_NULL: BlobData = BlobData {
+    path: literal(b"/dev/null"),
+    id: gix::ObjectId::empty_blob(gix::index::hash::Kind::Sha1),
+};
+
 fn cmd_diff(da: DiffArgs) -> Result<(), BlameDiffError> {
     let repo = discover(".")?;
 
@@ -181,15 +193,16 @@ fn diff_with_disk(repo: &Repository, paths: &[&bstr::BStr]) -> Result<(), BlameD
                 let input =
                     diff::blob::intern::InternedInput::new(blob_contents, disk_contents.as_str());
 
+                let old = BlobData { id: e.id, path: p };
+                let new = BlobData { id: e.id, path: p };
+
                 let diff = diff::blob::diff(
                     diff::blob::Algorithm::Histogram,
                     &input,
-                    UnifiedDiffBuilder::new(&input),
+                    UnifiedDiffBuilder::new(&input, old, new),
                 );
 
-                if !diff.is_empty() {
-                    print!("--- a/{0}\n+++ b/{0}\n{1}", p, diff);
-                }
+                print!("{}", diff);
             }
         }
     }
@@ -205,18 +218,25 @@ fn diff_blob_with_null(
     let data = &id.object().unwrap().data;
     let file = std::str::from_utf8(&data).unwrap();
 
+    let id = BlobData {
+        id: id.detach(),
+        path,
+    };
+
     let input = if to_null {
-        println!("--- a/{}\n+++ /dev/null", path);
         diff::blob::intern::InternedInput::new(file, "")
     } else {
-        println!("--- /dev/null\n+++ b/{}", path);
         diff::blob::intern::InternedInput::new("", file)
     };
 
     let diff = diff::blob::diff(
         diff::blob::Algorithm::Histogram,
         &input,
-        UnifiedDiffBuilder::new(&input),
+        if to_null {
+            UnifiedDiffBuilder::new(&input, DEV_NULL, id)
+        } else {
+            UnifiedDiffBuilder::new(&input, id, DEV_NULL)
+        },
     );
 
     print!("{}", diff);
@@ -237,13 +257,22 @@ fn diff_two_blobs(
 
     let input = diff::blob::intern::InternedInput::new(old_file, new_file);
 
+    let new = BlobData {
+        id: new_id.detach(),
+        path,
+    };
+    let old = BlobData {
+        id: old_id.detach(),
+        path,
+    };
+
     let diff = diff::blob::diff(
         diff::blob::Algorithm::Histogram,
         &input,
-        UnifiedDiffBuilder::new(&input),
+        UnifiedDiffBuilder::new(&input, old, new),
     );
 
-    println!("--- a/{0}\n+++ b/{0}\n{1}", path, diff);
+    print!("{}", diff);
 
     Ok(())
 }
