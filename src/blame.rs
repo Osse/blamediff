@@ -14,6 +14,8 @@ use gix::{
     discover, hash, index, object, objs, Id, Object, Repository,
 };
 
+use crate::error::BlameDiffError;
+
 #[derive(Debug)]
 pub enum Error {
     NoFile,
@@ -114,23 +116,18 @@ impl<'a> Sink for Collector<'a> {
     }
 }
 
-pub fn blame_file(path: &Path) -> Result<Blame, Error> {
-    let repo = discover(".").unwrap();
+pub fn blame_file(path: &Path) -> Result<Blame, crate::BlameDiffError> {
+    let repo = discover(".")?;
 
-    let head = repo.rev_parse("HEAD").unwrap().single().unwrap();
+    let head = repo.rev_parse_single("HEAD")?;
 
     let blob = head
-        .object()
-        .unwrap()
-        .peel_to_tree()
-        .unwrap()
-        .lookup_entry_by_path(path)
-        .unwrap()
-        .unwrap()
-        .object()
-        .unwrap()
-        .peel_to_kind(gix::object::Kind::Blob)
-        .unwrap();
+        .object()?
+        .peel_to_tree()?
+        .lookup_entry_by_path(path)?
+        .ok_or(BlameDiffError::BadArgs)?
+        .object()?
+        .peel_to_kind(gix::object::Kind::Blob)?;
 
     let contents = String::from_utf8(blob.data.clone()).expect("Valid UTF-8");
 
@@ -148,32 +145,23 @@ pub fn blame_file(path: &Path) -> Result<Blame, Error> {
         }
 
         let commit = repo
-            .find_object(c_id)
-            .unwrap()
-            .peel_to_kind(object::Kind::Commit)
-            .unwrap()
+            .find_object(c_id)?
+            .peel_to_kind(object::Kind::Commit)?
             .into_commit();
 
-        if let Some(tree_entry) = commit.tree().unwrap().lookup_entry_by_path(path).unwrap() {
+        if let Some(tree_entry) = commit.tree()?.lookup_entry_by_path(path).unwrap() {
             if let Some(Ok(prev_commit_id)) = iter.peek() {
                 let prev_commit_id = prev_commit_id.as_ref();
 
                 let prev_commit = repo
-                    .find_object(prev_commit_id)
-                    .unwrap()
-                    .peel_to_kind(object::Kind::Commit)
-                    .unwrap()
+                    .find_object(prev_commit_id)?
+                    .peel_to_kind(object::Kind::Commit)?
                     .into_commit();
 
-                if let Some(prev_tree_entry) = prev_commit
-                    .tree()
-                    .unwrap()
-                    .lookup_entry_by_path(path)
-                    .unwrap()
-                {
+                if let Some(prev_tree_entry) = prev_commit.tree()?.lookup_entry_by_path(path)? {
                     if tree_entry.object_id() != prev_tree_entry.object_id() {
-                        let old = &prev_tree_entry.object().unwrap().data;
-                        let new = &tree_entry.object().unwrap().data;
+                        let old = &prev_tree_entry.object()?.data;
+                        let new = &tree_entry.object()?.data;
 
                         let old_file = std::str::from_utf8(&old).expect("valid UTF-8");
                         let new_file = std::str::from_utf8(&new).expect("valid UTF-8");

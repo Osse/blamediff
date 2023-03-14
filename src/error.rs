@@ -5,10 +5,13 @@ pub enum BlameDiffError {
     DiscoverError(gix::discover::Error),
     PeelError(gix::object::peel::to_kind::Error),
     FindObject(gix::odb::store::find::Error),
+    FindObject2(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
     DiffGeneration(gix::diff::tree::changes::Error),
     Io(std::io::Error),
     SystemTime(std::time::SystemTimeError),
     Parse(gix::revision::spec::parse::Error),
+    ParseSingle(gix::revision::spec::parse::single::Error),
+    ObtainTree(gix::object::commit::Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
@@ -31,7 +34,15 @@ macro_rules! make_error {
         }
     };
 }
-
+make_error![gix::object::commit::Error, BlameDiffError::ObtainTree];
+make_error![
+    gix::revision::spec::parse::single::Error,
+    BlameDiffError::ParseSingle
+];
+make_error![
+    gix::odb::find::existing::Error<gix::odb::store::find::Error>,
+    BlameDiffError::FindObject2
+];
 make_error![gix::hash::decode::Error, BlameDiffError::Decode];
 make_error![gix::revision::spec::parse::Error, BlameDiffError::Parse];
 make_error![gix::discover::Error, BlameDiffError::DiscoverError];
