@@ -1,3 +1,7 @@
+#![allow(unused_must_use)]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use gix::{bstr, discover, hash, index, object, objs, Object, Repository};
 
 pub fn log(paths: &[std::path::PathBuf]) {

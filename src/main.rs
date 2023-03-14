@@ -1,15 +1,16 @@
 #![allow(unused_must_use)]
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 mod diffprinter;
 
 use std::path::PathBuf;
 
 use diffprinter::UnifiedDiffBuilder;
-use gix::bstr;
 use gix::bstr::ByteSlice;
+use gix::{bstr, config::tree::Diff};
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 use gix::{diff, discover, hash, index, object, objs, Object, Repository};
 
@@ -19,9 +20,8 @@ use error::BlameDiffError;
 mod blame;
 mod log;
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Args {
+#[derive(Args)]
+struct DiffArgs {
     /// Old commit to diff
     #[arg(short, long)]
     old: Option<bstr::BString>,
@@ -34,13 +34,30 @@ struct Args {
     paths: Vec<PathBuf>,
 }
 
+#[derive(Args)]
+struct BlameArgs {
+    path: PathBuf,
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Diff(DiffArgs),
+    Blame(BlameArgs),
+}
+
 fn get_object<'a>(
     repo: &'a Repository,
     oid: impl Into<hash::ObjectId>,
     kind: object::Kind,
 ) -> Result<Object<'a>, BlameDiffError> {
-    repo.try_find_object(oid)?
-        .ok_or(BlameDiffError::BadArgs)?
+    repo.find_object(oid)?
         .peel_to_kind(kind)
         .map_err(|_| BlameDiffError::BadArgs)
 }
@@ -58,16 +75,20 @@ fn resolve_tree<'a>(
 }
 
 fn main() -> Result<(), BlameDiffError> {
-    let args = Args::parse();
+    let args = Cli::parse();
 
+    match args.command {
+        Command::Diff(da) => cmd_diff(da),
+        Command::Blame(ba) => cmd_blame(ba),
+    }
+}
+
+fn cmd_diff(da: DiffArgs) -> Result<(), BlameDiffError> {
     let repo = discover(".")?;
 
     let prefix = repo.prefix().expect("have worktree")?;
 
-    let b = blame::blame_file(&args.paths[0]);
-    return Ok(());
-
-    let owned_paths: Vec<bstr::BString> = args
+    let owned_paths: Vec<bstr::BString> = da
         .paths
         .into_iter()
         .map(|p| prefix.join(p))
@@ -76,10 +97,10 @@ fn main() -> Result<(), BlameDiffError> {
 
     let paths = owned_paths.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
 
-    let old = args.old.unwrap_or(bstr::BString::from("HEAD"));
+    let old = da.old.unwrap_or(bstr::BString::from("HEAD"));
     let old = resolve_tree(&repo, old.as_ref())?.into_tree();
 
-    if let Some(arg) = args.new {
+    if let Some(arg) = da.new {
         let new = resolve_tree(&repo, arg.as_ref())?.into_tree();
 
         diff_two_trees(old, new, &paths);
@@ -224,5 +245,10 @@ fn diff_two_blobs(
 
     println!("--- a/{0}\n+++ b/{0}\n{1}", path, diff);
 
+    Ok(())
+}
+
+fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
+    blame::blame_file(&ba.path);
     Ok(())
 }
