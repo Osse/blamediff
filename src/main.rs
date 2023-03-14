@@ -65,13 +65,13 @@ fn get_object<'a>(
 fn resolve_tree<'a>(
     repo: &'a Repository,
     object: &bstr::BStr,
-) -> Result<Object<'a>, BlameDiffError> {
+) -> Result<gix::Tree<'a>, BlameDiffError> {
     let object = repo
         .rev_parse(object)?
         .single()
         .ok_or(BlameDiffError::BadArgs)?;
 
-    get_object(repo, object, object::Kind::Tree)
+    get_object(repo, object, object::Kind::Tree).map(|o| o.into_tree())
 }
 
 fn main() -> Result<(), BlameDiffError> {
@@ -110,10 +110,10 @@ fn cmd_diff(da: DiffArgs) -> Result<(), BlameDiffError> {
     let paths = owned_paths.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
 
     let old = da.old.unwrap_or(bstr::BString::from("HEAD"));
-    let old = resolve_tree(&repo, old.as_ref())?.into_tree();
+    let old = resolve_tree(&repo, old.as_ref())?;
 
     if let Some(arg) = da.new {
-        let new = resolve_tree(&repo, arg.as_ref())?.into_tree();
+        let new = resolve_tree(&repo, arg.as_ref())?;
 
         diff_two_trees(old, new, &paths);
     } else {
