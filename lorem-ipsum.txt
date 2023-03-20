@@ -65,27 +65,6 @@ VITAE VOLUTPAT FELIS JUSTO VEL DUI. CRAS BIBENDUM TEMPOR ALIQUET. LOREM IPSUM
 DOLOR SIT AMET, CONSECTETUR ADIPISCING ELIT. MAECENAS UT URNA ANTE. MAURIS ELIT
 NISI, SCELERISQUE QUIS MAURIS AT, ULTRICES RUTRUM NISL. NAM EU NULLA MAURIS.
 
-Sed bibendum purus sed cursus congue. In eleifend erat sit amet ipsum feugiat,
-nec porta tortor euismod. Nulla eleifend nec ex in vehicula. Aliquam eget ex
-vel elit maximus dictum. Curabitur odio dolor, iaculis a enim at, fringilla
-faucibus sem. Praesent et rutrum lectus, vitae auctor metus. Cras dolor leo,
-facilisis ac velit in, feugiat porttitor turpis.
-
-Nullam ut ullamcorper sem. In hac habitasse platea dictumst. Fusce
-sollicitudin, odio eu maximus mollis, est sapien hendrerit elit, sed molestie
-risus enim luctus magna. Vivamus cursus magna ut imperdiet efficitur.
-Pellentesque quis egestas tortor, vitae tincidunt diam. Aliquam erat volutpat.
-Mauris in placerat erat.
-
-Vestibulum quis accumsan odio, sed commodo purus. Etiam hendrerit nibh arcu,
-sed placerat elit porta ac. Fusce ut nisi auctor, porta sem vel, tincidunt
-justo. Integer maximus id lorem in semper. Sed ornare sed felis eu ultricies.
-Ut lobortis elit vel odio pellentesque, nec eleifend ante ornare. Quisque
-cursus metus finibus erat eleifend, eget molestie tortor congue. Nunc pulvinar
-arcu quis risus posuere pulvinar. Aenean laoreet ante porttitor, malesuada quam
-nec, malesuada eros. Nam velit tortor, blandit vel rhoncus bibendum,
-pellentesque sit amet ante.
-
 Sed mollis velit elit, et eleifend lorem lacinia fermentum. Nam consectetur
 venenatis efficitur. Proin aliquet leo ac nisi pellentesque, et faucibus nunc
 commodo. In quam orci, feugiat in nulla vitae, viverra consequat nunc. Mauris
