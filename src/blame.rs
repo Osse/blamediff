@@ -14,6 +14,7 @@ use gix::{
     discover, hash, index, object, objs, Id, Object, Repository,
 };
 
+use crate::collector;
 use crate::error::BlameDiffError;
 
 #[derive(Debug)]
@@ -82,32 +83,6 @@ impl IncompleteBlame {
 #[derive(Debug)]
 pub struct Blame(Vec<gix::ObjectId>);
 
-struct Collector<'a> {
-    interner: &'a Interner<&'a str>,
-    ranges: Vec<(Range<u32>, Range<u32>)>,
-}
-
-impl<'a> Collector<'a> {
-    fn new(input: &'a InternedInput<&str>) -> Self {
-        Self {
-            interner: &input.interner,
-            ranges: vec![],
-        }
-    }
-}
-
-impl<'a> Sink for Collector<'a> {
-    type Out = Vec<(Range<u32>, Range<u32>)>;
-
-    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push((before, after));
-    }
-
-    fn finish(self) -> Self::Out {
-        self.ranges
-    }
-}
-
 pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiffError> {
     let repo = discover(".")?;
 
@@ -160,7 +135,11 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
 
                         let input = InternedInput::new(old_file, new_file);
 
-                        let ranges = diff(Algorithm::Histogram, &input, Collector::new(&input));
+                        let ranges = diff(
+                            Algorithm::Histogram,
+                            &input,
+                            collector::Collector::new(&input),
+                        );
 
                         for (_before, after) in ranges.into_iter() {
                             blame_state.assign(after, c_id.detach());

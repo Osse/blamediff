@@ -18,6 +18,7 @@ mod error;
 use error::BlameDiffError;
 
 mod blame;
+mod collector;
 mod log;
 
 #[derive(Args)]
