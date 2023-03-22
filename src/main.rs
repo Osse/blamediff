@@ -36,6 +36,7 @@ struct DiffArgs {
 
 #[derive(Args)]
 struct BlameArgs {
+    revision: String,
     path: PathBuf,
 }
 
@@ -278,6 +279,6 @@ fn diff_two_blobs(
 }
 
 fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
-    blame::blame_file(&ba.path);
+    blame::blame_file(&ba.revision, &ba.path);
     Ok(())
 }

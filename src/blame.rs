@@ -116,10 +116,10 @@ impl<'a> Sink for Collector<'a> {
     }
 }
 
-pub fn blame_file(path: &Path) -> Result<Blame, crate::BlameDiffError> {
+pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiffError> {
     let repo = discover(".")?;
 
-    let head = repo.rev_parse_single("HEAD")?;
+    let head = repo.rev_parse_single(revision)?;
 
     let blob = head
         .object()?
@@ -189,8 +189,40 @@ pub fn blame_file(path: &Path) -> Result<Blame, crate::BlameDiffError> {
     let b = blame_state.finish();
 
     for (a, b) in contents.lines().zip(b.0.iter()) {
-        println!("{} {}", b, a);
+        println!("{}\t{}", b, a);
     }
 
     Ok(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::cmd_blame;
+
+    use super::blame_file;
+
+    #[test]
+    fn first_test() {
+        let blame = std::process::Command::new("git")
+            .args(["blame", "first-test", "lorem-ipsum.txt"])
+            .output()
+            .expect("able to run git blame")
+            .stdout;
+
+        let blame = String::from_utf8(blame)
+            .expect("blame is UTF-8")
+            .lines()
+            .map(|l| {
+                let (id, _) = l.split_once('\t').unwrap();
+                gix::ObjectId::from_hex(id.as_bytes()).expect("valid sha1s from git blame")
+            })
+            .collect::<Vec<_>>();
+
+        let p = Path::new("lorem--ipsum.txt");
+        let b = blame_file("first-test", p).unwrap();
+
+        assert_eq!(blame, b.0);
+    }
 }
