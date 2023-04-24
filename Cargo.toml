@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 gix = "0.43"
 clap = { version = "4.2", features = ["derive"] }
+pretty_assertions = "1.3"

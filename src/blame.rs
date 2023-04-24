@@ -197,6 +197,7 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::{assert_eq, assert_ne};
     use std::path::Path;
 
     use crate::cmd_blame;
@@ -206,7 +207,14 @@ mod tests {
     #[test]
     fn first_test() {
         let blame = std::process::Command::new("git")
-            .args(["blame", "first-test", "lorem-ipsum.txt"])
+            .args([
+                "blame",
+                "--no-abbrev",
+                "--root",
+                "-s",
+                "first-test",
+                "lorem-ipsum.txt",
+            ])
             .output()
             .expect("able to run git blame")
             .stdout;
@@ -215,14 +223,14 @@ mod tests {
             .expect("blame is UTF-8")
             .lines()
             .map(|l| {
-                let (id, _) = l.split_once('\t').unwrap();
-                gix::ObjectId::from_hex(id.as_bytes()).expect("valid sha1s from git blame")
+                gix::ObjectId::from_hex(&l.as_bytes()[..40]).expect("valid sha1s from git blame")
             })
             .collect::<Vec<_>>();
 
-        let p = Path::new("lorem--ipsum.txt");
+        let p = Path::new("lorem-ipsum.txt");
         let b = blame_file("first-test", p).unwrap();
 
+        assert_eq!(blame.len(), b.0.len());
         assert_eq!(blame, b.0);
     }
 }
