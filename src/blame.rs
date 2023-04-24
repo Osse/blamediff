@@ -21,7 +21,7 @@ pub enum Error {
     NoFile,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct Line {
     line: String,
     offset: u32,
@@ -30,55 +30,47 @@ struct Line {
 
 #[derive(Debug)]
 struct IncompleteBlame {
-    x: std::collections::BTreeMap<u32, Line>,
-    lines: u32,
+    x: rangemap::RangeMap<u32, Line>,
+    total_range: Range<u32>,
 }
 
 impl IncompleteBlame {
     fn new(contents: String) -> Self {
-        let mut x = std::collections::BTreeMap::new();
-        for (line_number, line) in contents.lines().enumerate() {
-            x.insert(
-                (line_number + 1) as u32,
-                Line {
-                    line: line.to_owned(),
-                    offset: 0,
-                    commit: None,
-                },
-            );
-        }
+        let x = rangemap::RangeMap::new();
+        let lines = contents.lines().count() as u32;
 
         Self {
             x,
-            lines: contents.lines().count() as u32,
+            total_range: 0..lines,
         }
     }
 
-    fn assign(&mut self, line: u32, id: gix::ObjectId) {
-        if let Some(l) = self.x.get_mut(&line) {
-            if l.commit.is_none() {
-                l.commit = Some(id);
-            }
-        }
-    }
-
-    fn assign_range(&mut self, lines: Range<u32>, id: gix::ObjectId) {
-        for l in lines {
-            self.assign(l, id);
+    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
+        let l = Line {
+            line: String::new(),
+            offset: 0,
+            commit: Some(id),
+        };
+        let gaps = self.x.gaps(&lines).collect::<Vec<_>>();
+        for r in gaps {
+            self.x.insert(r, l.clone())
         }
     }
 
     fn is_complete(&self) -> bool {
-        self.x.values().all(|l| l.commit.is_some())
+        self.x.gaps(&self.total_range).count() == 0
     }
 
     fn finish(self) -> Blame {
         let v = self
             .x
-            .values()
-            .map(|l| {
-                l.commit
-                    .unwrap_or(gix::ObjectId::empty_blob(hash::Kind::Sha1))
+            .iter()
+            .flat_map(|(r, l)| {
+                r.clone().into_iter().map(|r| {
+                    l.commit
+                        .clone()
+                        .unwrap_or(gix::ObjectId::empty_blob(hash::Kind::Sha1))
+                })
             })
             .collect::<Vec<_>>();
 
@@ -171,14 +163,14 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
                         let ranges = diff(Algorithm::Histogram, &input, Collector::new(&input));
 
                         for (_before, after) in ranges.into_iter() {
-                            blame_state.assign_range(after, c_id.detach());
+                            blame_state.assign(after, c_id.detach());
                         }
                     }
                 }
             } else {
                 // File doesn't exist in previous commit
                 // Attribute remainling lines to this commit
-                blame_state.assign_range(1..(blame_state.lines as u32 + 1), c_id.detach());
+                blame_state.assign(blame_state.total_range.clone(), c_id.detach());
             }
         } else {
             // File doesn't exist in current commit
