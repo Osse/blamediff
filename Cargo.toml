@@ -7,5 +7,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gix = "0.38"
-clap = { version = "4.1", features = ["derive"] }
+gix = "0.43"
+clap = { version = "4.2", features = ["derive"] }
