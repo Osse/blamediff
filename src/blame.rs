@@ -14,76 +14,81 @@ use gix::{
     discover, hash, index, object, objs, Id, Object, Repository,
 };
 
+use rangemap::RangeMap;
+
 use crate::collector;
 use crate::error::BlameDiffError;
 
+/// A Blame represents a list of commit IDs, one for each line of the file.
 #[derive(Debug)]
-pub enum Error {
-    NoFile,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct Line {
-    line: String,
-    offset: u32,
-    commit: Option<gix::ObjectId>,
-}
+pub struct Blame(Vec<gix::ObjectId>);
 
 #[derive(Debug)]
 struct IncompleteBlame {
-    x: rangemap::RangeMap<u32, Line>,
+    wip: RangeMap<u32, gix::ObjectId>,
+    offsets: RangeMap<u32, u32>,
+    lines: Vec<String>,
     total_range: Range<u32>,
 }
 
 impl IncompleteBlame {
     fn new(contents: String) -> Self {
-        let x = rangemap::RangeMap::new();
-        let lines = contents.lines().count() as u32;
+        let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
+
+        let len = lines.len() as u32;
+        let total_range = 0..len;
+
+        let offsets = RangeMap::from_iter(std::iter::once((total_range.clone(), 0)));
 
         Self {
-            x,
-            total_range: 0..lines,
+            wip: RangeMap::new(),
+            offsets,
+            lines,
+            total_range,
         }
     }
 
     fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
-        let l = Line {
-            line: String::new(),
-            offset: 0,
-            commit: Some(id),
-        };
-        let gaps = self.x.gaps(&lines).collect::<Vec<_>>();
+        &lines;
+        let gaps = self.wip.gaps(&lines).collect::<Vec<_>>();
+
         for r in gaps {
-            self.x.insert(r, l.clone())
+            self.wip.insert(r, id)
+        }
+    }
+
+    fn assign_rest(&mut self, id: gix::ObjectId) {
+        let gaps = self.wip.gaps(&self.total_range).collect::<Vec<_>>();
+
+        for r in gaps {
+            self.wip.insert(r, id)
         }
     }
 
     fn is_complete(&self) -> bool {
-        self.x.gaps(&self.total_range).count() == 0
+        self.wip.gaps(&self.total_range).count() == 0
     }
 
     fn finish(self) -> Blame {
         let v = self
-            .x
+            .wip
             .iter()
-            .flat_map(|(r, l)| {
-                r.clone().into_iter().map(|r| {
-                    l.commit
-                        .clone()
-                        .unwrap_or(gix::ObjectId::empty_blob(hash::Kind::Sha1))
-                })
-            })
+            .flat_map(|(r, c)| r.clone().into_iter().map(|_l| c.clone()))
             .collect::<Vec<_>>();
 
         Blame(v)
     }
 }
 
-/// A Blame is a set of spans
-#[derive(Debug)]
-pub struct Blame(Vec<gix::ObjectId>);
+fn find_commit<'a>(repo: &'a Repository, id: impl Into<gix::ObjectId>) -> gix::Commit<'a> {
+    repo.find_object(id)
+        .expect("Valid commit ID")
+        .peel_to_kind(object::Kind::Commit)
+        .expect("Valid commit ID")
+        .into_commit()
+}
 
-pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiffError> {
+pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> {
     let repo = discover(".")?;
 
     let head = repo.rev_parse_single(revision)?;
@@ -98,7 +103,7 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
 
     let contents = String::from_utf8(blob.data.clone()).expect("Valid UTF-8");
 
-    let mut blame_state = IncompleteBlame::new(contents.clone());
+    let mut blame_state = IncompleteBlame::new(contents);
 
     let mut iter = repo
         .rev_walk(std::iter::once(head))
@@ -111,19 +116,13 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
             break;
         }
 
-        let commit = repo
-            .find_object(c_id)?
-            .peel_to_kind(object::Kind::Commit)?
-            .into_commit();
+        let commit = find_commit(&repo, c_id);
 
         if let Some(tree_entry) = commit.tree()?.lookup_entry_by_path(path).unwrap() {
             if let Some(Ok(prev_commit_id)) = iter.peek() {
                 let prev_commit_id = prev_commit_id.as_ref();
 
-                let prev_commit = repo
-                    .find_object(prev_commit_id)?
-                    .peel_to_kind(object::Kind::Commit)?
-                    .into_commit();
+                let prev_commit = find_commit(&repo, prev_commit_id);
 
                 if let Some(prev_tree_entry) = prev_commit.tree()?.lookup_entry_by_path(path)? {
                     if tree_entry.object_id() != prev_tree_entry.object_id() {
@@ -141,15 +140,25 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
                             collector::Collector::new(&input),
                         );
 
-                        for (_before, after) in ranges.into_iter() {
-                            blame_state.assign(after, c_id.detach());
+                        for (before, after) in ranges.into_iter() {
+                            let before_len = before.end - before.start;
+                            let after_len = after.end - after.start;
+
+                            if before_len == after_len {
+                                blame_state.assign(after, c_id.detach());
+                            } else if before_len < after_len {
+                                dbg!("Lines added in this commit");
+                                blame_state.assign(after, c_id.detach());
+                            } else {
+                                dbg!("Lines removed in this commit");
+                            }
                         }
                     }
                 }
             } else {
                 // File doesn't exist in previous commit
                 // Attribute remainling lines to this commit
-                blame_state.assign(blame_state.total_range.clone(), c_id.detach());
+                blame_state.assign_rest(c_id.detach());
             }
         } else {
             // File doesn't exist in current commit
@@ -158,10 +167,6 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, crate::BlameDiff
     }
 
     let b = blame_state.finish();
-
-    for (a, b) in contents.lines().zip(b.0.iter()) {
-        println!("{}\t{}", b, a);
-    }
 
     Ok(b)
 }
