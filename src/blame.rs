@@ -23,10 +23,15 @@ use crate::error::BlameDiffError;
 #[derive(Debug)]
 pub struct Blame(Vec<gix::ObjectId>);
 
+struct Line {
+    offset: i32,
+    content: String,
+}
+
 #[derive(Debug)]
 struct IncompleteBlame {
     wip: RangeMap<u32, gix::ObjectId>,
-    offsets: RangeMap<u32, u32>,
+    offsets: RangeMap<u32, i32>,
     lines: Vec<String>,
     total_range: Range<u32>,
 }
@@ -80,12 +85,20 @@ impl IncompleteBlame {
     }
 }
 
-fn find_commit<'a>(repo: &'a Repository, id: impl Into<gix::ObjectId>) -> gix::Commit<'a> {
+fn tree_entry<'a>(
+    repo: &'a Repository,
+    id: impl Into<gix::ObjectId>,
+    path: impl AsRef<Path>,
+) -> Option<gix::object::tree::Entry<'a>> {
     repo.find_object(id)
         .expect("Valid commit ID")
         .peel_to_kind(object::Kind::Commit)
         .expect("Valid commit ID")
         .into_commit()
+        .tree()
+        .expect("valid commit with tree")
+        .lookup_entry_by_path(path)
+        .expect("able to look up")
 }
 
 pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> {
@@ -111,23 +124,17 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
         .unwrap()
         .peekable();
 
-    while let Some(Ok(c_id)) = iter.next() {
+    while let Some(Ok(commit_id)) = iter.next() {
         if blame_state.is_complete() {
             break;
         }
 
-        let commit = find_commit(&repo, c_id);
-
-        if let Some(tree_entry) = commit.tree()?.lookup_entry_by_path(path).unwrap() {
+        if let Some(entry) = tree_entry(&repo, commit_id, path) {
             if let Some(Ok(prev_commit_id)) = iter.peek() {
-                let prev_commit_id = prev_commit_id.as_ref();
-
-                let prev_commit = find_commit(&repo, prev_commit_id);
-
-                if let Some(prev_tree_entry) = prev_commit.tree()?.lookup_entry_by_path(path)? {
-                    if tree_entry.object_id() != prev_tree_entry.object_id() {
-                        let old = &prev_tree_entry.object()?.data;
-                        let new = &tree_entry.object()?.data;
+                if let Some(prev_entry) = tree_entry(&repo, prev_commit_id.as_ref(), path) {
+                    if entry.object_id() != prev_entry.object_id() {
+                        let old = &prev_entry.object()?.data;
+                        let new = &entry.object()?.data;
 
                         let old_file = std::str::from_utf8(&old).expect("valid UTF-8");
                         let new_file = std::str::from_utf8(&new).expect("valid UTF-8");
@@ -145,20 +152,25 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
                             let after_len = after.end - after.start;
 
                             if before_len == after_len {
-                                blame_state.assign(after, c_id.detach());
+                                blame_state.assign(after, commit_id.detach());
                             } else if before_len < after_len {
-                                dbg!("Lines added in this commit");
-                                blame_state.assign(after, c_id.detach());
+                                blame_state.assign(after, commit_id.detach());
                             } else {
-                                dbg!("Lines removed in this commit");
+                                blame_state.assign(after, commit_id.detach());
                             }
                         }
                     }
+                } else {
+                    // File doesn't exist in previous commit
+                    // Attribute remainling lines to this commit
+                    blame_state.assign_rest(commit_id.detach());
+                    break;
                 }
             } else {
                 // File doesn't exist in previous commit
                 // Attribute remainling lines to this commit
-                blame_state.assign_rest(c_id.detach());
+                blame_state.assign_rest(commit_id.detach());
+                break;
             }
         } else {
             // File doesn't exist in current commit
@@ -174,39 +186,74 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 #[cfg(test)]
 mod tests {
     use pretty_assertions::{assert_eq, assert_ne};
+    use std::fmt::Write;
     use std::path::Path;
-
-    use crate::cmd_blame;
 
     use super::blame_file;
 
-    #[test]
-    fn first_test() {
-        let blame = std::process::Command::new("git")
-            .args([
-                "blame",
-                "--no-abbrev",
-                "--root",
-                "-s",
-                "first-test",
-                "lorem-ipsum.txt",
-            ])
+    const FILE: &str = "lorem-ipsum.txt";
+
+    fn get_file(revision: &str) -> String {
+        let mut revision = revision.to_string();
+        write!(&mut revision, ":{}", FILE);
+
+        let output = std::process::Command::new("git")
+            .args(["show", &revision])
+            .output()
+            .expect("able to run git show")
+            .stdout;
+        String::from_utf8(output).expect("valid UTF-8")
+    }
+
+    fn run_git_blame(revision: &str) -> Vec<gix::ObjectId> {
+        let output = std::process::Command::new("git")
+            .args(["blame", "--no-abbrev", "--root", "-s", revision, FILE])
             .output()
             .expect("able to run git blame")
             .stdout;
-
-        let blame = String::from_utf8(blame)
-            .expect("blame is UTF-8")
-            .lines()
-            .map(|l| {
-                gix::ObjectId::from_hex(&l.as_bytes()[..40]).expect("valid sha1s from git blame")
-            })
-            .collect::<Vec<_>>();
-
-        let p = Path::new("lorem-ipsum.txt");
-        let b = blame_file("first-test", p).unwrap();
-
-        assert_eq!(blame.len(), b.0.len());
-        assert_eq!(blame, b.0);
+        output[0..output.len() - 1]
+            .split(|&c| c == b'\n')
+            .map(|l| gix::ObjectId::from_hex(&l[..40]).expect("valid sha1s from git blame"))
+            .collect()
     }
+
+    macro_rules! make_test {
+        ($sha1:ident, $message:literal) => {
+            #[test]
+            fn $sha1() {
+                let sha1 = &stringify!($sha1)[5..];
+                let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
+                let fasit = run_git_blame(sha1);
+
+                let file = get_file(sha1);
+
+                let fasit: Vec<(gix::ObjectId, String)> = fasit
+                    .into_iter()
+                    .zip(file.lines())
+                    .map(|(f, l)| (f, l.to_string()))
+                    .collect();
+
+                let blame: Vec<(gix::ObjectId, String)> = blame
+                    .into_iter()
+                    .zip(file.lines())
+                    .map(|(f, l)| (f, l.to_string()))
+                    .collect();
+
+                assert_eq!(fasit.len(), file.lines().count());
+                assert_eq!(fasit.len(), blame.len(), "{}", $message);
+                assert_eq!(fasit, blame, "{}", $message);
+            }
+        };
+    }
+    make_test!(test_3f181d2, "Initial commit");
+    make_test!(test_ef7c80e, "Simple change");
+    make_test!(test_5d5d4a0, "Removes more than it adds");
+    make_test!(test_65fd4e0, "Adds more than it removes");
+    make_test!(test_f11d682, "Change on first line");
+    make_test!(test_02933a0, "Change on last line");
+    make_test!(test_45233a5, "Blank line in context");
+    make_test!(test_8b31223, "Indent and overlap with previous change.");
+    make_test!(test_4a881ff, "Simple change but a bit bigger");
+    make_test!(test_00c5cf8, "Remove a lot");
+    make_test!(test_fc492d8, "Add a lot and blank lines");
 }
