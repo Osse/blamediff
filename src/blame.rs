@@ -89,16 +89,13 @@ fn tree_entry<'a>(
     repo: &'a Repository,
     id: impl Into<gix::ObjectId>,
     path: impl AsRef<Path>,
-) -> Option<gix::object::tree::Entry<'a>> {
-    repo.find_object(id)
-        .expect("Valid commit ID")
-        .peel_to_kind(object::Kind::Commit)
-        .expect("Valid commit ID")
+) -> Result<Option<gix::object::tree::Entry<'a>>, BlameDiffError> {
+    repo.find_object(id)?
+        .peel_to_kind(object::Kind::Commit)?
         .into_commit()
-        .tree()
-        .expect("valid commit with tree")
+        .tree()?
         .lookup_entry_by_path(path)
-        .expect("able to look up")
+        .map_err(|e| e.into())
 }
 
 pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> {
@@ -129,9 +126,9 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
             break;
         }
 
-        if let Some(entry) = tree_entry(&repo, commit_id, path) {
+        if let Some(entry) = tree_entry(&repo, commit_id, path)? {
             if let Some(Ok(prev_commit_id)) = iter.peek() {
-                if let Some(prev_entry) = tree_entry(&repo, prev_commit_id.as_ref(), path) {
+                if let Some(prev_entry) = tree_entry(&repo, prev_commit_id.as_ref(), path)? {
                     if entry.object_id() != prev_entry.object_id() {
                         let old = &prev_entry.object()?.data;
                         let new = &entry.object()?.data;

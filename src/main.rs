@@ -61,7 +61,7 @@ fn get_object<'a>(
 ) -> Result<Object<'a>, BlameDiffError> {
     repo.find_object(oid)?
         .peel_to_kind(kind)
-        .map_err(|_| BlameDiffError::BadArgs)
+        .map_err(|e| e.into())
 }
 
 fn resolve_tree<'a>(
