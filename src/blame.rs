@@ -106,9 +106,7 @@ fn tree_entry<'a>(
     path: impl AsRef<Path>,
 ) -> Result<Option<gix::object::tree::Entry<'a>>, BlameDiffError> {
     repo.find_object(id)?
-        .peel_to_kind(object::Kind::Commit)?
-        .into_commit()
-        .tree()?
+        .peel_to_tree()?
         .lookup_entry_by_path(path)
         .map_err(|e| e.into())
 }
@@ -126,7 +124,7 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
         .object()?
         .peel_to_kind(gix::object::Kind::Blob)?;
 
-    let contents = String::from_utf8(blob.data.clone()).expect("Valid UTF-8");
+    let contents = String::from_utf8(blob.data.clone())?;
 
     let mut blame_state = IncompleteBlame::new(contents);
 
@@ -144,8 +142,8 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
                         let old = &prev_entry.object()?.data;
                         let new = &entry.object()?.data;
 
-                        let old_file = std::str::from_utf8(&old).expect("valid UTF-8");
-                        let new_file = std::str::from_utf8(&new).expect("valid UTF-8");
+                        let old_file = std::str::from_utf8(&old)?;
+                        let new_file = std::str::from_utf8(&new)?;
 
                         let input = InternedInput::new(old_file, new_file);
 

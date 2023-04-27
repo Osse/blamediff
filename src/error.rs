@@ -11,7 +11,8 @@ pub enum BlameDiffError {
     Parse(gix::revision::spec::parse::Error),
     ParseSingle(gix::revision::spec::parse::single::Error),
     ObtainTree(gix::object::commit::Error),
-    Utf8Error(std::str::Utf8Error),
+    StringUtf8Error(std::string::FromUtf8Error),
+    StrUtf8Error(std::str::Utf8Error),
     WalkError(gix::revision::walk::Error),
 }
 
@@ -48,5 +49,6 @@ make_error![gix::diff::tree::changes::Error, DiffGeneration];
 make_error![gix::object::peel::to_kind::Error, PeelError];
 make_error![std::io::Error, Io];
 make_error![std::time::SystemTimeError, SystemTime];
-make_error![std::str::Utf8Error, Utf8Error];
+make_error![std::str::Utf8Error, StrUtf8Error];
+make_error![std::string::FromUtf8Error, StringUtf8Error];
 make_error![gix::revision::walk::Error, WalkError];
