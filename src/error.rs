@@ -11,6 +11,7 @@ pub enum BlameDiffError {
     Parse(gix::revision::spec::parse::Error),
     ParseSingle(gix::revision::spec::parse::single::Error),
     ObtainTree(gix::object::commit::Error),
+    Utf8Error(std::str::Utf8Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
@@ -46,3 +47,4 @@ make_error![gix::diff::tree::changes::Error, DiffGeneration];
 make_error![gix::object::peel::to_kind::Error, PeelError];
 make_error![std::io::Error, Io];
 make_error![std::time::SystemTimeError, SystemTime];
+make_error![std::str::Utf8Error, Utf8Error];
