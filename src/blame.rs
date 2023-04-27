@@ -70,6 +70,21 @@ impl IncompleteBlame {
         }
     }
 
+    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
+        for (before, after) in ranges {
+            let before_len = before.end - before.start;
+            let after_len = after.end - after.start;
+
+            if before_len == after_len {
+                self.assign(after, id);
+            } else if before_len < after_len {
+                self.assign(after, id);
+            } else {
+                self.assign(after, id);
+            }
+        }
+    }
+
     fn is_complete(&self) -> bool {
         self.wip.gaps(&self.total_range).count() == 0
     }
@@ -141,18 +156,7 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
                         let ranges =
                             diff(Algorithm::Histogram, &input, collector::Collector::new());
 
-                        for (before, after) in ranges.into_iter() {
-                            let before_len = before.end - before.start;
-                            let after_len = after.end - after.start;
-
-                            if before_len == after_len {
-                                blame_state.assign(after, commit_id.detach());
-                            } else if before_len < after_len {
-                                blame_state.assign(after, commit_id.detach());
-                            } else {
-                                blame_state.assign(after, commit_id.detach());
-                            }
-                        }
+                        blame_state.process(ranges, commit_id.detach());
                     }
                 } else {
                     // File doesn't exist in previous commit
