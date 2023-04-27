@@ -154,19 +154,18 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
                     }
                 } else {
                     // File doesn't exist in previous commit
-                    // Attribute remainling lines to this commit
+                    // Attribute remaining lines to this commit
                     blame_state.assign_rest(commit_id.detach());
                     break;
                 }
             } else {
-                // File doesn't exist in previous commit
-                // Attribute remainling lines to this commit
+                // There is no previous commit
+                // Attribute remaining lines to this commit
                 blame_state.assign_rest(commit_id.detach());
                 break;
             }
         } else {
-            // File doesn't exist in current commit
-            break;
+            unreachable!("File doesn't exist in current commit");
         }
     }
 
