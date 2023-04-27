@@ -217,11 +217,11 @@ mod tests {
             .collect()
     }
 
-    macro_rules! make_test {
+    macro_rules! blame_test {
         ($sha1:ident, $message:literal) => {
             #[test]
             fn $sha1() {
-                let sha1 = &stringify!($sha1)[5..];
+                let sha1 = &stringify!($sha1)[4..];
                 let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
                 let fasit = run_git_blame(sha1);
 
@@ -245,15 +245,15 @@ mod tests {
             }
         };
     }
-    make_test!(test_3f181d2, "Initial commit");
-    make_test!(test_ef7c80e, "Simple change");
-    make_test!(test_5d5d4a0, "Removes more than it adds");
-    make_test!(test_65fd4e0, "Adds more than it removes");
-    make_test!(test_f11d682, "Change on first line");
-    make_test!(test_02933a0, "Change on last line");
-    make_test!(test_45233a5, "Blank line in context");
-    make_test!(test_8b31223, "Indent and overlap with previous change.");
-    make_test!(test_4a881ff, "Simple change but a bit bigger");
-    make_test!(test_00c5cf8, "Remove a lot");
-    make_test!(test_fc492d8, "Add a lot and blank lines");
+    blame_test!(t01_3f181d2, "Initial commit");
+    blame_test!(t02_ef7c80e, "Simple change");
+    blame_test!(t03_5d5d4a0, "Removes more than it adds");
+    blame_test!(t04_65fd4e0, "Adds more than it removes");
+    blame_test!(t05_f11d682, "Change on first line");
+    blame_test!(t06_02933a0, "Change on last line");
+    blame_test!(t07_45233a5, "Blank line in context");
+    blame_test!(t08_8b31223, "Indent and overlap with previous change.");
+    blame_test!(t09_4a881ff, "Simple change but a bit bigger");
+    blame_test!(t10_00c5cf8, "Remove a lot");
+    blame_test!(t11_fc492d8, "Add a lot and blank lines");
 }
