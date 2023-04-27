@@ -130,11 +130,7 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 
     let mut blame_state = IncompleteBlame::new(contents);
 
-    let mut iter = repo
-        .rev_walk(std::iter::once(head))
-        .all()
-        .unwrap()
-        .peekable();
+    let mut iter = repo.rev_walk(std::iter::once(head)).all()?.peekable();
 
     while let Some(Ok(commit_id)) = iter.next() {
         if blame_state.is_complete() {
