@@ -2,25 +2,21 @@ use std::{ops::Range, path::Path};
 
 use gix::diff::blob::{
     diff,
-    intern::{InternedInput, Interner, Token},
+    intern::{InternedInput, Token},
     Sink,
 };
 
-pub struct Collector<'a> {
-    interner: &'a Interner<&'a str>,
+pub struct Collector {
     ranges: Vec<(Range<u32>, Range<u32>)>,
 }
 
-impl<'a> Collector<'a> {
-    pub fn new(input: &'a InternedInput<&str>) -> Self {
-        Self {
-            interner: &input.interner,
-            ranges: vec![],
-        }
+impl<'a> Collector {
+    pub fn new() -> Self {
+        Self { ranges: vec![] }
     }
 }
 
-impl<'a> Sink for Collector<'a> {
+impl<'a> Sink for Collector {
     type Out = Vec<(Range<u32>, Range<u32>)>;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {

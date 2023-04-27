@@ -141,11 +141,8 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 
                         let input = InternedInput::new(old_file, new_file);
 
-                        let ranges = diff(
-                            Algorithm::Histogram,
-                            &input,
-                            collector::Collector::new(&input),
-                        );
+                        let ranges =
+                            diff(Algorithm::Histogram, &input, collector::Collector::new());
 
                         for (before, after) in ranges.into_iter() {
                             let before_len = before.end - before.start;
