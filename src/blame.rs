@@ -31,7 +31,7 @@ struct Line {
 #[derive(Debug)]
 struct IncompleteBlame {
     wip: RangeMap<u32, gix::ObjectId>,
-    offsets: RangeMap<u32, i32>,
+    offsets: Vec<i32>,
     lines: Vec<String>,
     total_range: Range<u32>,
 }
@@ -43,18 +43,15 @@ impl IncompleteBlame {
         let len = lines.len() as u32;
         let total_range = 0..len;
 
-        let offsets = RangeMap::from_iter(std::iter::once((total_range.clone(), 0)));
-
         Self {
             wip: RangeMap::new(),
-            offsets,
+            offsets: vec![0; len as usize],
             lines,
             total_range,
         }
     }
 
     fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
-        &lines;
         let gaps = self.wip.gaps(&lines).collect::<Vec<_>>();
 
         for r in gaps {
@@ -66,27 +63,37 @@ impl IncompleteBlame {
         let gaps = self.wip.gaps(&self.total_range).collect::<Vec<_>>();
 
         for r in gaps {
-            self.wip.insert(r, id)
+            for i in r {
+                let offset = self.offsets[i as usize] as u32;
+                let r = (i + offset)..(i + offset + 1);
+                self.wip.insert(r, id)
+            }
         }
     }
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
         for (before, after) in ranges {
+            self.assign(after.clone(), id);
+
             let before_len = before.end - before.start;
             let after_len = after.end - after.start;
 
             if before_len == after_len {
-                self.assign(after, id);
             } else if before_len < after_len {
-                self.assign(after, id);
+                self.shift_after(after.end, after_len - before_len);
             } else {
-                self.assign(after, id);
             }
         }
     }
 
     fn is_complete(&self) -> bool {
         self.wip.gaps(&self.total_range).count() == 0
+    }
+
+    fn shift_after(&mut self, start: u32, offset: u32) {
+        for i in start..self.total_range.end {
+            self.offsets[i as usize] -= offset as i32;
+        }
     }
 
     fn finish(self) -> Blame {
@@ -208,26 +215,36 @@ mod tests {
             .collect()
     }
 
+    fn run_git_blame2(revision: &str) -> Vec<String> {
+        let output = std::process::Command::new("git")
+            .args(["blame", "--no-abbrev", "--root", "-s", revision, FILE])
+            .output()
+            .expect("able to run git blame")
+            .stdout;
+        output[0..output.len() - 1]
+            .split(|&c| c == b'\n')
+            .map(|c| {
+                let mut s = String::from_utf8(c.to_vec()).unwrap();
+                s.replace_range(40..(s.find(')').unwrap() + 2), " "); // Remove " nn) "
+                s
+            })
+            .collect()
+    }
+
     macro_rules! blame_test {
         ($sha1:ident, $message:literal) => {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
                 let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
-                let fasit = run_git_blame(sha1);
+                let fasit = run_git_blame2(sha1);
 
                 let file = get_file(sha1);
 
-                let fasit: Vec<(gix::ObjectId, String)> = fasit
+                let blame: Vec<String> = blame
                     .into_iter()
                     .zip(file.lines())
-                    .map(|(f, l)| (f, l.to_string()))
-                    .collect();
-
-                let blame: Vec<(gix::ObjectId, String)> = blame
-                    .into_iter()
-                    .zip(file.lines())
-                    .map(|(f, l)| (f, l.to_string()))
+                    .map(|(f, l)| f.to_string() + " " + l)
                     .collect();
 
                 assert_eq!(fasit.len(), file.lines().count());
