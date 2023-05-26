@@ -135,46 +135,48 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 
     let mut blame_state = IncompleteBlame::new(contents);
 
-    let mut iter = repo.rev_walk(std::iter::once(head)).all()?.peekable();
+    let commits = repo
+        .rev_walk(std::iter::once(head))
+        .all()?
+        .collect::<Result<Vec<_>, _>>()
+        .expect("Able to collect all history");
 
-    while let Some(Ok(commit_id)) = iter.next() {
-        if blame_state.is_complete() {
-            break;
-        }
+    for c in commits.windows(2) {
+        let commit = c[0];
+        let prev_commit = c[1];
 
-        if let Some(entry) = tree_entry(&repo, commit_id, path)? {
-            if let Some(Ok(prev_commit_id)) = iter.peek() {
-                if let Some(prev_entry) = tree_entry(&repo, prev_commit_id.as_ref(), path)? {
-                    if entry.object_id() != prev_entry.object_id() {
-                        let old = &prev_entry.object()?.data;
-                        let new = &entry.object()?.data;
+        let entry = tree_entry(&repo, commit, path)?;
+        let prev_entry = tree_entry(&repo, prev_commit, path)?;
 
-                        let old_file = std::str::from_utf8(&old)?;
-                        let new_file = std::str::from_utf8(&new)?;
+        match (entry, prev_entry) {
+            (Some(e), Some(p_e)) => {
+                if e.object_id() != p_e.object_id() {
+                    let old = &p_e.object()?.data;
+                    let new = &e.object()?.data;
 
-                        let input = InternedInput::new(old_file, new_file);
+                    let old_file = std::str::from_utf8(&old)?;
+                    let new_file = std::str::from_utf8(&new)?;
 
-                        let ranges =
-                            diff(Algorithm::Histogram, &input, collector::Collector::new());
+                    let input = InternedInput::new(old_file, new_file);
 
-                        blame_state.process(ranges, commit_id.detach());
-                    }
-                } else {
-                    // File doesn't exist in previous commit
-                    // Attribute remaining lines to this commit
-                    blame_state.assign_rest(commit_id.detach());
-                    break;
+                    let ranges = diff(Algorithm::Histogram, &input, collector::Collector::new());
+
+                    blame_state.process(ranges, commit.detach());
                 }
-            } else {
-                // There is no previous commit
+            }
+            (Some(_e), None) => {
+                // File doesn't exist in previous commit
                 // Attribute remaining lines to this commit
-                blame_state.assign_rest(commit_id.detach());
+                blame_state.assign_rest(commit.detach());
                 break;
             }
-        } else {
-            unreachable!("File doesn't exist in current commit");
-        }
+            (None, _) => unreachable!("File doesn't exist in current commit"),
+        };
     }
+
+    // Whatever's left assign it to the last commit (or only commit)
+    // In case we hit the "break" above there is no rest to assign so this does nothing.
+    blame_state.assign_rest(commits.last().expect("at least one commit").detach());
 
     let b = blame_state.finish();
 
