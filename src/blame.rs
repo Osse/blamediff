@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use std::{ops::Range, path::Path};
+use std::{collections::HashMap, ops::Range, path::Path};
 
 use gix::{
     bstr,
@@ -11,13 +11,15 @@ use gix::{
         intern::{InternedInput, Interner, Token},
         Algorithm, Sink,
     },
-    discover, hash, index, object, objs, Id, Object, Repository,
+    discover, hash, index, object, objs,
+    odb::pack::multi_index::chunk::offsets,
+    Id, Object, Repository,
 };
 
 use rangemap::RangeMap;
 
-use crate::collector;
 use crate::error::BlameDiffError;
+use crate::{blame, collector};
 
 /// A Blame represents a list of commit IDs, one for each line of the file.
 #[derive(Debug)]
@@ -29,11 +31,18 @@ struct Line {
 }
 
 #[derive(Debug)]
+enum MappedLine {
+    Mapped(u32),
+    True(u32),
+}
+
+#[derive(Debug)]
 struct IncompleteBlame {
     wip: RangeMap<u32, gix::ObjectId>,
     offsets: Vec<i32>,
     lines: Vec<String>,
     total_range: Range<u32>,
+    reverse_offsets: Vec<RangeMap<u32, Range<u32>>>,
 }
 
 impl IncompleteBlame {
@@ -47,7 +56,8 @@ impl IncompleteBlame {
             wip: RangeMap::new(),
             offsets: vec![0; len as usize],
             lines,
-            total_range,
+            total_range: total_range.clone(),
+            reverse_offsets: vec![],
         }
     }
 
@@ -63,26 +73,13 @@ impl IncompleteBlame {
         let gaps = self.wip.gaps(&self.total_range).collect::<Vec<_>>();
 
         for r in gaps {
-            for i in r {
-                let offset = self.offsets[i as usize] as u32;
-                let r = (i + offset)..(i + offset + 1);
-                self.wip.insert(r, id)
-            }
+            self.wip.insert(r, id)
         }
     }
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
-        for (before, after) in ranges {
+        for (_before, after) in &ranges {
             self.assign(after.clone(), id);
-
-            let before_len = before.end - before.start;
-            let after_len = after.end - after.start;
-
-            if before_len == after_len {
-            } else if before_len < after_len {
-                self.shift_after(after.end, after_len - before_len);
-            } else {
-            }
         }
     }
 
@@ -90,10 +87,36 @@ impl IncompleteBlame {
         self.wip.gaps(&self.total_range).count() == 0
     }
 
-    fn shift_after(&mut self, start: u32, offset: u32) {
+    fn shift_before(&mut self, before: &Range<u32>, after: &Range<u32>) {
+        let start = after.start;
+        let offset = (before.end - before.start) - (after.end - after.start);
         for i in start..self.total_range.end {
             self.offsets[i as usize] -= offset as i32;
         }
+    }
+
+    fn shift_after(&mut self, before: &Range<u32>, after: &Range<u32>) {
+        let start = after.start;
+        let offset = (after.end - after.start) - (before.end - before.start);
+        for i in start..self.total_range.end {
+            self.offsets[i as usize] += offset as i32;
+        }
+    }
+
+    fn map_lines(&mut self, lines: Range<u32>) -> Vec<u32> {
+        let mut true_lines = vec![];
+
+        // for l in lines {
+        //     let mut l = l;
+        //     for r in self.reverse_offsets.iter().rev() {
+        //         match r.get(&l) {
+        //             Some(ll) => l = ll;
+        //             None => { true_lines.push(l); break; }
+        //         };
+        //     }
+        // }
+
+        true_lines
     }
 
     fn finish(self) -> Blame {

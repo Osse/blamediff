@@ -77,6 +77,15 @@ fn resolve_tree<'a>(
 }
 
 fn main() -> Result<(), BlameDiffError> {
+    // let mut r = rangemap::RangeMap::<u32, Range<u32>>::new();
+
+    // r.insert(0..100, 0..100);
+    // r.insert(10..15, 9..11);
+    // r.insert(17..20, 3);
+
+    // Decrement by one
+    // for i in r.overlapping(&(5..25)) {}
+
     let args = Cli::parse();
 
     match args.command {
