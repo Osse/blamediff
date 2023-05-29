@@ -20,10 +20,10 @@ impl<'a> Sink for Collector {
     type Out = Vec<(Range<u32>, Range<u32>)>;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push(dbg!((before, after)));
+        self.ranges.push((before, after));
     }
 
     fn finish(self) -> Self::Out {
-        self.ranges
+        dbg!(self.ranges)
     }
 }

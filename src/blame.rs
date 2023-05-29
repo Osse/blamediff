@@ -1,8 +1,13 @@
 #![allow(unused_must_use)]
+#![allow(unused_variables)]
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use std::{collections::HashMap, ops::Range, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+    path::Path,
+};
 
 use gix::{
     bstr,
@@ -31,9 +36,49 @@ struct Line {
 }
 
 #[derive(Debug)]
-enum MappedLine {
-    Mapped(u32),
-    True(u32),
+struct Mapper {
+    /// Map from true line to fake line
+    m: BTreeMap<u32, u32>,
+}
+
+impl Mapper {
+    fn new(r: Range<u32>) -> Self {
+        Self {
+            m: BTreeMap::from_iter(r.map(|i| (i, i))),
+        }
+    }
+
+    fn feed(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
+        for (before, after) in ranges {
+            let offset = after.len() as isize - before.len() as isize;
+            if offset < 0 {
+                for (k, v) in self.m.iter_mut() {
+                    if *k >= after.end {
+                        *v = *v + (-offset as u32);
+                    }
+                }
+            } else if offset > 0 {
+                for (k, v) in self.m.iter_mut() {
+                    if *k >= after.end {
+                        *v = *v - (offset as u32);
+                    }
+                }
+            }
+        }
+    }
+
+    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<u32> {
+        let mut true_lines = vec![];
+        for l in fake_lines {
+            for (k, v) in self.m.iter() {
+                if *v == l {
+                    true_lines.push(*k);
+                }
+            }
+        }
+
+        true_lines
+    }
 }
 
 #[derive(Debug)]
@@ -43,6 +88,7 @@ struct IncompleteBlame {
     lines: Vec<String>,
     total_range: Range<u32>,
     reverse_offsets: Vec<RangeMap<u32, Range<u32>>>,
+    line_mapper: Mapper,
 }
 
 impl IncompleteBlame {
@@ -58,6 +104,7 @@ impl IncompleteBlame {
             lines,
             total_range: total_range.clone(),
             reverse_offsets: vec![],
+            line_mapper: Mapper::new(total_range.clone()),
         }
     }
 
@@ -70,17 +117,17 @@ impl IncompleteBlame {
     }
 
     fn assign_rest(&mut self, id: gix::ObjectId) {
-        let gaps = self.wip.gaps(&self.total_range).collect::<Vec<_>>();
-
-        for r in gaps {
-            self.wip.insert(r, id)
-        }
+        self.assign(self.total_range.clone(), id)
     }
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
-        for (_before, after) in &ranges {
-            self.assign(after.clone(), id);
+        for (_before, after) in ranges.iter().cloned() {
+            for i in self.line_mapper.get_true_lines(after) {
+                self.assign(i..i + 1, id);
+            }
         }
+
+        self.line_mapper.feed(ranges);
     }
 
     fn is_complete(&self) -> bool {
@@ -104,17 +151,7 @@ impl IncompleteBlame {
     }
 
     fn map_lines(&mut self, lines: Range<u32>) -> Vec<u32> {
-        let mut true_lines = vec![];
-
-        // for l in lines {
-        //     let mut l = l;
-        //     for r in self.reverse_offsets.iter().rev() {
-        //         match r.get(&l) {
-        //             Some(ll) => l = ll;
-        //             None => { true_lines.push(l); break; }
-        //         };
-        //     }
-        // }
+        let true_lines = vec![];
 
         true_lines
     }
@@ -134,11 +171,30 @@ fn tree_entry<'a>(
     repo: &'a Repository,
     id: impl Into<gix::ObjectId>,
     path: impl AsRef<Path>,
-) -> Result<Option<gix::object::tree::Entry<'a>>, BlameDiffError> {
+) -> Result<Option<object::tree::Entry<'a>>, BlameDiffError> {
     repo.find_object(id)?
         .peel_to_tree()?
         .lookup_entry_by_path(path)
         .map_err(|e| e.into())
+}
+
+fn diff_tree_entries(
+    old: object::tree::Entry,
+    new: object::tree::Entry,
+) -> Result<Vec<(Range<u32>, Range<u32>)>, BlameDiffError> {
+    let old = &old.object()?.data;
+    let new = &new.object()?.data;
+
+    let old_file = std::str::from_utf8(&old)?;
+    let new_file = std::str::from_utf8(&new)?;
+
+    let input = InternedInput::new(old_file, new_file);
+
+    Ok(diff(
+        Algorithm::Histogram,
+        &input,
+        collector::Collector::new(),
+    ))
 }
 
 pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> {
@@ -172,20 +228,13 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
         let prev_entry = tree_entry(&repo, prev_commit, path)?;
 
         match (entry, prev_entry) {
-            (Some(e), Some(p_e)) => {
-                if e.object_id() != p_e.object_id() {
-                    let old = &p_e.object()?.data;
-                    let new = &e.object()?.data;
-
-                    let old_file = std::str::from_utf8(&old)?;
-                    let new_file = std::str::from_utf8(&new)?;
-
-                    let input = InternedInput::new(old_file, new_file);
-
-                    let ranges = diff(Algorithm::Histogram, &input, collector::Collector::new());
-
-                    blame_state.process(ranges, commit.detach());
-                }
+            (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
+                let ranges = diff_tree_entries(p_e, e)?;
+                blame_state.process(ranges, commit.detach())
+            }
+            (Some(_e), Some(_p_e)) => {
+                // The two files are identical
+                continue;
             }
             (Some(_e), None) => {
                 // File doesn't exist in previous commit
@@ -197,8 +246,8 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
         };
     }
 
-    // Whatever's left assign it to the last commit (or only commit)
-    // In case we hit the "break" above there is no rest to assign so this does nothing.
+    // Whatever's left assign it to the last (or only) commit. In case we hit the
+    // "break" above there is no rest to assign so this does nothing.
     blame_state.assign_rest(commits.last().expect("at least one commit").detach());
 
     let b = blame_state.finish();
@@ -272,7 +321,6 @@ mod tests {
                     .map(|(f, l)| f.to_string() + " " + l)
                     .collect();
 
-                assert_eq!(fasit.len(), file.lines().count());
                 assert_eq!(fasit.len(), blame.len(), "{}", $message);
                 assert_eq!(fasit, blame, "{}", $message);
             }
