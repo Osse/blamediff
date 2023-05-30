@@ -40,16 +40,48 @@ struct Line {
 }
 
 #[derive(Debug)]
-struct Mapper {
-    /// Map from true line to fake line
+struct IncompleteBlame {
+    wip: RangeMap<u32, gix::ObjectId>,
+    total_range: Range<u32>,
     m: Vec<u32>,
 }
 
-impl Mapper {
-    fn new(r: Range<u32>) -> Self {
+impl IncompleteBlame {
+    fn new(lines: usize) -> Self {
+        let total_range = 0..lines as u32;
+
         Self {
-            m: Vec::from_iter(r),
+            wip: RangeMap::new(),
+            total_range: total_range.clone(),
+            m: Vec::from_iter(total_range),
         }
+    }
+
+    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
+        let gaps = self.wip.gaps(&lines).collect::<Vec<_>>();
+
+        for r in gaps {
+            self.wip.insert(r, id)
+        }
+    }
+
+    fn assign_rest(&mut self, id: gix::ObjectId) {
+        self.assign(self.total_range.clone(), id)
+    }
+
+    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
+        for (_before, after) in ranges.iter().cloned() {
+            let true_ranges = self.get_true_lines(after);
+            for r in true_ranges {
+                self.assign(r, id);
+            }
+        }
+
+        self.update_mapping(ranges);
+    }
+
+    fn is_complete(&self) -> bool {
+        self.wip.gaps(&self.total_range).count() == 0
     }
 
     fn update_mapping(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
@@ -104,52 +136,6 @@ impl Mapper {
         }
 
         ranges
-    }
-}
-
-#[derive(Debug)]
-struct IncompleteBlame {
-    wip: RangeMap<u32, gix::ObjectId>,
-    total_range: Range<u32>,
-    line_mapper: Mapper,
-}
-
-impl IncompleteBlame {
-    fn new(lines: usize) -> Self {
-        let total_range = 0..lines as u32;
-
-        Self {
-            wip: RangeMap::new(),
-            total_range: total_range.clone(),
-            line_mapper: Mapper::new(total_range.clone()),
-        }
-    }
-
-    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
-        let gaps = self.wip.gaps(&lines).collect::<Vec<_>>();
-
-        for r in gaps {
-            self.wip.insert(r, id)
-        }
-    }
-
-    fn assign_rest(&mut self, id: gix::ObjectId) {
-        self.assign(self.total_range.clone(), id)
-    }
-
-    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
-        for (_before, after) in ranges.iter().cloned() {
-            let true_ranges = self.line_mapper.get_true_lines(after);
-            for r in true_ranges {
-                self.assign(r, id);
-            }
-        }
-
-        self.line_mapper.update_mapping(ranges);
-    }
-
-    fn is_complete(&self) -> bool {
-        self.wip.gaps(&self.total_range).count() == 0
     }
 
     fn finish(self) -> Blame {
