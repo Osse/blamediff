@@ -67,7 +67,7 @@ impl Mapper {
         }
     }
 
-    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<u32> {
+    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
         let mut true_lines = vec![];
         for l in fake_lines {
             for (k, v) in self.m.iter() {
@@ -77,7 +77,29 @@ impl Mapper {
             }
         }
 
-        true_lines
+        let mut slice: &[u32] = &true_lines;
+
+        let mut ranges = vec![];
+
+        while slice.len() > 0 {
+            let mut head_len = 1;
+            let mut iter = slice.windows(2);
+
+            while let Some([l, r]) = iter.next() {
+                if *l + 1 == *r {
+                    head_len += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let (head, tail) = slice.split_at(head_len);
+            slice = tail;
+
+            ranges.push(*head.first().unwrap()..*head.last().unwrap() + 1);
+        }
+
+        ranges
     }
 }
 
@@ -118,9 +140,9 @@ impl IncompleteBlame {
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
         for (_before, after) in ranges.iter().cloned() {
-            let lines = self.line_mapper.get_true_lines(after);
-            for i in lines {
-                self.assign(i..i + 1, id);
+            let true_ranges = self.line_mapper.get_true_lines(after);
+            for r in true_ranges {
+                self.assign(r, id);
             }
         }
 
