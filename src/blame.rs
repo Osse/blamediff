@@ -18,6 +18,10 @@ use gix::{
     },
     discover, hash, index, object, objs,
     odb::pack::multi_index::chunk::offsets,
+    revision::{
+        spec::parse::{Options, RefsHint},
+        Spec,
+    },
     Id, Object, Repository,
 };
 
@@ -194,10 +198,24 @@ fn diff_tree_entries(
     ))
 }
 
-pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> {
+pub fn blame_file(revision: &str, path: &Path, end: Option<&str>) -> Result<Blame, BlameDiffError> {
     let repo = discover(".")?;
 
     let head = repo.rev_parse_single(revision)?;
+
+    let end = end.map(|v| {
+        Spec::from_bstr(
+            bstr::BStr::new(v),
+            &repo,
+            Options {
+                refs_hint: RefsHint::PreferObject,
+                object_kind_hint: None,
+            },
+        )
+        .expect("hekek")
+        .single()
+        .unwrap()
+    });
 
     let blob = head
         .object()?
@@ -211,11 +229,23 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 
     let mut blame_state = IncompleteBlame::new(contents);
 
-    let commits = repo
-        .rev_walk(std::iter::once(head))
-        .all()?
-        .collect::<Result<Vec<_>, _>>()
-        .expect("Able to collect all history");
+    let rev_walker = repo.rev_walk(std::iter::once(head));
+
+    let mut stop = false;
+    let commits = if let Some(end) = end {
+        rev_walker.selected(move |o| {
+            if stop {
+                return false;
+            } else if end.as_ref() == o {
+                stop = true;
+            }
+            true
+        })?
+    } else {
+        rev_walker.all()?
+    }
+    .collect::<Result<Vec<_>, _>>()
+    .expect("Able to collect all history");
 
     for c in commits.windows(2) {
         let commit = c[0];
@@ -255,7 +285,6 @@ pub fn blame_file(revision: &str, path: &Path) -> Result<Blame, BlameDiffError> 
 #[cfg(test)]
 mod tests {
     use pretty_assertions::{assert_eq, assert_ne};
-    use std::fmt::Write;
     use std::path::Path;
 
     use super::blame_file;
@@ -273,6 +302,7 @@ mod tests {
         String::from_utf8(output).expect("valid UTF-8")
     }
 
+    // Return list of strings in the format "SHA1 SP <line contents>"
     fn run_git_blame(revision: &str) -> Vec<String> {
         let output = std::process::Command::new("git")
             .args(["blame", "--porcelain", revision, FILE])
@@ -299,6 +329,11 @@ mod tests {
             .collect()
     }
 
+    fn run_git_blame_with_end(revision: &str, end: &str) -> Vec<String> {
+        let range = end.to_string() + ".." + revision;
+        run_git_blame(&range)
+    }
+
     fn compare(sha1: &str, blame: Vec<gix::ObjectId>, fasit: Vec<String>, message: &str) {
         let file = get_file(sha1);
 
@@ -317,8 +352,17 @@ mod tests {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
-                let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
+                let blame = blame_file(sha1, Path::new(FILE), None).unwrap().0;
                 let fasit = run_git_blame(sha1);
+                compare(sha1, blame, fasit, $message);
+            }
+        };
+        ($sha1:ident, $sha1end:expr, $message:literal) => {
+            #[test]
+            fn $sha1() {
+                let sha1 = &stringify!($sha1)[4..];
+                let blame = blame_file(sha1, Path::new(FILE), Some($sha1end)).unwrap().0;
+                let fasit = run_git_blame_with_end(sha1, $sha1end);
                 compare(sha1, blame, fasit, $message);
             }
         };

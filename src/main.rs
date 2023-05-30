@@ -289,6 +289,6 @@ fn diff_two_blobs(
 }
 
 fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
-    blame::blame_file(&ba.revision, &ba.path);
+    blame::blame_file(&ba.revision, &ba.path, None);
     Ok(())
 }
