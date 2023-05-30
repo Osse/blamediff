@@ -276,17 +276,27 @@ mod tests {
 
     fn run_git_blame(revision: &str) -> Vec<String> {
         let output = std::process::Command::new("git")
-            .args(["blame", "--no-abbrev", "--root", "-s", revision, FILE])
+            .args(["blame", "--porcelain", revision, FILE])
             .output()
             .expect("able to run git blame")
             .stdout;
-        output[0..output.len() - 1]
-            .split(|&c| c == b'\n')
-            .map(|c| {
-                let mut s = String::from_utf8(c.to_vec()).unwrap();
-                s.replace_range(40..(s.find(')').unwrap() + 2), " "); // Remove " nn) "
-                s
+
+        let output = std::str::from_utf8(&output).unwrap();
+
+        output
+            .split_terminator('\n')
+            .filter_map(|line| {
+                if line.len() > 41 && line[0..40].bytes().all(|b| b.is_ascii_hexdigit()) {
+                    Some(&line[0..40])
+                } else if line.starts_with('\t') {
+                    Some(&line[1..])
+                } else {
+                    None
+                }
             })
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|c| c[0].to_owned() + " " + c[1])
             .collect()
     }
 
