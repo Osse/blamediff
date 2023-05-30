@@ -42,27 +42,27 @@ struct Line {
 #[derive(Debug)]
 struct Mapper {
     /// Map from true line to fake line
-    m: BTreeMap<u32, u32>,
+    m: Vec<u32>,
 }
 
 impl Mapper {
     fn new(r: Range<u32>) -> Self {
         Self {
-            m: BTreeMap::from_iter(r.map(|i| (i, i))),
+            m: Vec::from_iter(r),
         }
     }
 
-    fn feed(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
+    fn update_mapping(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
         for (before, after) in ranges {
             let offset = after.len() as isize - before.len() as isize;
             if offset < 0 {
-                for (k, v) in self.m.iter_mut() {
+                for v in self.m.iter_mut() {
                     if *v >= after.end {
                         *v = *v + (-offset as u32);
                     }
                 }
             } else if offset > 0 {
-                for (k, v) in self.m.iter_mut() {
+                for v in self.m.iter_mut() {
                     if *v >= after.end {
                         *v = *v - (offset as u32);
                     }
@@ -74,9 +74,9 @@ impl Mapper {
     fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
         let mut true_lines = vec![];
         for l in fake_lines {
-            for (k, v) in self.m.iter() {
+            for (k, v) in self.m.iter().enumerate() {
                 if *v == l {
-                    true_lines.push(*k);
+                    true_lines.push(k as u32);
                 }
             }
         }
@@ -110,21 +110,16 @@ impl Mapper {
 #[derive(Debug)]
 struct IncompleteBlame {
     wip: RangeMap<u32, gix::ObjectId>,
-    lines: Vec<String>,
     total_range: Range<u32>,
     line_mapper: Mapper,
 }
 
 impl IncompleteBlame {
-    fn new(contents: String) -> Self {
-        let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-
-        let len = lines.len() as u32;
-        let total_range = 0..len;
+    fn new(lines: usize) -> Self {
+        let total_range = 0..lines as u32;
 
         Self {
             wip: RangeMap::new(),
-            lines,
             total_range: total_range.clone(),
             line_mapper: Mapper::new(total_range.clone()),
         }
@@ -150,7 +145,7 @@ impl IncompleteBlame {
             }
         }
 
-        self.line_mapper.feed(ranges);
+        self.line_mapper.update_mapping(ranges);
     }
 
     fn is_complete(&self) -> bool {
@@ -227,7 +222,7 @@ pub fn blame_file(revision: &str, path: &Path, end: Option<&str>) -> Result<Blam
 
     let contents = String::from_utf8(blob.data.clone())?;
 
-    let mut blame_state = IncompleteBlame::new(contents);
+    let mut blame_state = IncompleteBlame::new(contents.lines().count());
 
     let rev_walker = repo.rev_walk(std::iter::once(head));
 
@@ -277,9 +272,12 @@ pub fn blame_file(revision: &str, path: &Path, end: Option<&str>) -> Result<Blam
     // "break" above there is no rest to assign so this does nothing.
     blame_state.assign_rest(commits.last().expect("at least one commit").detach());
 
-    let b = blame_state.finish();
-
-    Ok(b)
+    if blame_state.is_complete() {
+        let b = blame_state.finish();
+        Ok(b)
+    } else {
+        Err(BlameDiffError::BadArgs)
+    }
 }
 
 #[cfg(test)]
@@ -310,7 +308,7 @@ mod tests {
             .expect("able to run git blame")
             .stdout;
 
-        let output = std::str::from_utf8(&output).unwrap();
+        let output = std::str::from_utf8(&output).expect("valid UTF-8");
 
         output
             .split_terminator('\n')
@@ -373,17 +371,16 @@ mod tests {
     //     printf $i $n
     // done
 
-    blame_test!(t01_3f181d2, "Initial commit");
-    blame_test!(t02_ef7c80e, "Simple change");
-    blame_test!(t03_5d5d4a0, "Removes more than it adds");
-    blame_test!(t04_65fd4e0, "Adds more than it removes");
-    blame_test!(t05_f11d682, "Change on first line");
-    blame_test!(t06_02933a0, "Change on last line");
-    blame_test!(t07_45233a5, "Blank line in context");
-    blame_test!(t08_8b31223, "Indent and overlap with previous change.");
-    blame_test!(t09_4a881ff, "Simple change but a bit bigger");
-    blame_test!(t10_00c5cf8, "Remove a lot");
-    blame_test!(t11_fc492d8, "Add a lot and blank lines");
-    blame_test!(t12_4f959b7, "Multiple changes in one commit");
-    blame_test!(t13_2664fa7, "Multiple changes in one commit again");
+    blame_test!(t01_753d1db, "Initial commit");
+    blame_test!(t02_f28f649, "Simple change");
+    blame_test!(t03_d3baed3, "Removes more than it adds");
+    blame_test!(t04_536a0f5, "Adds more than it removes");
+    blame_test!(t05_6a30c80, "Change on first line");
+    blame_test!(t06_4d8a3c7, "Multiple changes in one commit");
+    blame_test!(t07_2064b3c, "Change on last line");
+    blame_test!(t08_0e17ccb, "Blank line in context");
+    blame_test!(t09_3be8265, "Indent and overlap with previous change.");
+    blame_test!(t10_8bf8780, "Simple change but a bit bigger");
+    blame_test!(t11_f7a3a57, "Remove a lot");
+    blame_test!(t12_392db1b, "Add a lot and blank lines");
 }
