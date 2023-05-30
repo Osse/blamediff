@@ -6,6 +6,7 @@ use gix::diff::blob::{
     Sink,
 };
 
+/// Just collects the ranges given to it.
 pub struct Collector {
     ranges: Vec<(Range<u32>, Range<u32>)>,
 }
@@ -24,6 +25,6 @@ impl<'a> Sink for Collector {
     }
 
     fn finish(self) -> Self::Out {
-        dbg!(self.ranges)
+        self.ranges
     }
 }

@@ -53,13 +53,13 @@ impl Mapper {
             let offset = after.len() as isize - before.len() as isize;
             if offset < 0 {
                 for (k, v) in self.m.iter_mut() {
-                    if *k >= after.end {
+                    if *v >= after.end {
                         *v = *v + (-offset as u32);
                     }
                 }
             } else if offset > 0 {
                 for (k, v) in self.m.iter_mut() {
-                    if *k >= after.end {
+                    if *v >= after.end {
                         *v = *v - (offset as u32);
                     }
                 }
@@ -84,10 +84,8 @@ impl Mapper {
 #[derive(Debug)]
 struct IncompleteBlame {
     wip: RangeMap<u32, gix::ObjectId>,
-    offsets: Vec<i32>,
     lines: Vec<String>,
     total_range: Range<u32>,
-    reverse_offsets: Vec<RangeMap<u32, Range<u32>>>,
     line_mapper: Mapper,
 }
 
@@ -100,10 +98,8 @@ impl IncompleteBlame {
 
         Self {
             wip: RangeMap::new(),
-            offsets: vec![0; len as usize],
             lines,
             total_range: total_range.clone(),
-            reverse_offsets: vec![],
             line_mapper: Mapper::new(total_range.clone()),
         }
     }
@@ -122,7 +118,8 @@ impl IncompleteBlame {
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
         for (_before, after) in ranges.iter().cloned() {
-            for i in self.line_mapper.get_true_lines(after) {
+            let lines = self.line_mapper.get_true_lines(after);
+            for i in lines {
                 self.assign(i..i + 1, id);
             }
         }
@@ -132,28 +129,6 @@ impl IncompleteBlame {
 
     fn is_complete(&self) -> bool {
         self.wip.gaps(&self.total_range).count() == 0
-    }
-
-    fn shift_before(&mut self, before: &Range<u32>, after: &Range<u32>) {
-        let start = after.start;
-        let offset = (before.end - before.start) - (after.end - after.start);
-        for i in start..self.total_range.end {
-            self.offsets[i as usize] -= offset as i32;
-        }
-    }
-
-    fn shift_after(&mut self, before: &Range<u32>, after: &Range<u32>) {
-        let start = after.start;
-        let offset = (after.end - after.start) - (before.end - before.start);
-        for i in start..self.total_range.end {
-            self.offsets[i as usize] += offset as i32;
-        }
-    }
-
-    fn map_lines(&mut self, lines: Range<u32>) -> Vec<u32> {
-        let true_lines = vec![];
-
-        true_lines
     }
 
     fn finish(self) -> Blame {
