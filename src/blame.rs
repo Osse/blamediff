@@ -263,8 +263,7 @@ mod tests {
     const FILE: &str = "lorem-ipsum.txt";
 
     fn get_file(revision: &str) -> String {
-        let mut revision = revision.to_string();
-        write!(&mut revision, ":{}", FILE);
+        let revision = revision.to_string() + ":" + FILE;
 
         let output = std::process::Command::new("git")
             .args(["show", &revision])
@@ -300,6 +299,19 @@ mod tests {
             .collect()
     }
 
+    fn compare(sha1: &str, blame: Vec<gix::ObjectId>, fasit: Vec<String>, message: &str) {
+        let file = get_file(sha1);
+
+        let blame: Vec<String> = blame
+            .into_iter()
+            .zip(file.lines())
+            .map(|(f, l)| f.to_string() + " " + l)
+            .collect();
+
+        assert_eq!(fasit.len(), blame.len(), "{}", message);
+        assert_eq!(fasit, blame, "{}", message);
+    }
+
     macro_rules! blame_test {
         ($sha1:ident, $message:literal) => {
             #[test]
@@ -307,20 +319,16 @@ mod tests {
                 let sha1 = &stringify!($sha1)[4..];
                 let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
                 let fasit = run_git_blame(sha1);
-
-                let file = get_file(sha1);
-
-                let blame: Vec<String> = blame
-                    .into_iter()
-                    .zip(file.lines())
-                    .map(|(f, l)| f.to_string() + " " + l)
-                    .collect();
-
-                assert_eq!(fasit.len(), blame.len(), "{}", $message);
-                assert_eq!(fasit, blame, "{}", $message);
+                compare(sha1, blame, fasit, $message);
             }
         };
     }
+
+    // for i in ${(f)"$(git log --reverse --format='blame_test!(t%%02d_%h, "%s");\n' first-test)"}; do
+    //     n=$a[(Ie)$i]
+    //     printf $i $n
+    // done
+
     blame_test!(t01_3f181d2, "Initial commit");
     blame_test!(t02_ef7c80e, "Simple change");
     blame_test!(t03_5d5d4a0, "Removes more than it adds");
@@ -332,4 +340,6 @@ mod tests {
     blame_test!(t09_4a881ff, "Simple change but a bit bigger");
     blame_test!(t10_00c5cf8, "Remove a lot");
     blame_test!(t11_fc492d8, "Add a lot and blank lines");
+    blame_test!(t12_4f959b7, "Multiple changes in one commit");
+    blame_test!(t13_2664fa7, "Multiple changes in one commit again");
 }
