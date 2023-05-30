@@ -1,8 +1,3 @@
-#![allow(unused_must_use)]
-#![allow(unused_variables)]
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
@@ -34,16 +29,11 @@ use crate::{blame, collector};
 #[derive(Debug)]
 pub struct Blame(Vec<gix::ObjectId>);
 
-struct Line {
-    offset: i32,
-    content: String,
-}
-
 #[derive(Debug)]
 struct IncompleteBlame {
-    wip: RangeMap<u32, gix::ObjectId>,
+    blamed_lines: RangeMap<u32, gix::ObjectId>,
     total_range: Range<u32>,
-    m: Vec<u32>,
+    line_mapping: Vec<u32>,
 }
 
 impl IncompleteBlame {
@@ -51,17 +41,17 @@ impl IncompleteBlame {
         let total_range = 0..lines as u32;
 
         Self {
-            wip: RangeMap::new(),
+            blamed_lines: RangeMap::new(),
             total_range: total_range.clone(),
-            m: Vec::from_iter(total_range),
+            line_mapping: Vec::from_iter(total_range),
         }
     }
 
     fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
-        let gaps = self.wip.gaps(&lines).collect::<Vec<_>>();
+        let gaps = self.blamed_lines.gaps(&lines).collect::<Vec<_>>();
 
         for r in gaps {
-            self.wip.insert(r, id)
+            self.blamed_lines.insert(r, id)
         }
     }
 
@@ -81,23 +71,22 @@ impl IncompleteBlame {
     }
 
     fn is_complete(&self) -> bool {
-        self.wip.gaps(&self.total_range).count() == 0
+        self.blamed_lines.gaps(&self.total_range).count() == 0
     }
 
     fn update_mapping(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
         for (before, after) in ranges {
             let offset = after.len() as isize - before.len() as isize;
+
+            let p = self.line_mapping.partition_point(|v| *v < after.end);
+
             if offset < 0 {
-                for v in self.m.iter_mut() {
-                    if *v >= after.end {
-                        *v = *v + (-offset as u32);
-                    }
+                for v in &mut self.line_mapping[p..] {
+                    *v = *v + (-offset as u32);
                 }
             } else if offset > 0 {
-                for v in self.m.iter_mut() {
-                    if *v >= after.end {
-                        *v = *v - (offset as u32);
-                    }
+                for v in &mut self.line_mapping[p..] {
+                    *v = *v - (offset as u32);
                 }
             }
         }
@@ -106,7 +95,7 @@ impl IncompleteBlame {
     fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
         let mut true_lines = vec![];
         for l in fake_lines {
-            for (k, v) in self.m.iter().enumerate() {
+            for (k, v) in self.line_mapping.iter().enumerate() {
                 if *v == l {
                     true_lines.push(k as u32);
                 }
@@ -140,7 +129,7 @@ impl IncompleteBlame {
 
     fn finish(self) -> Blame {
         let v = self
-            .wip
+            .blamed_lines
             .iter()
             .flat_map(|(r, c)| r.clone().into_iter().map(|_l| c.clone()))
             .collect::<Vec<_>>();
@@ -259,8 +248,7 @@ pub fn blame_file(revision: &str, path: &Path, end: Option<&str>) -> Result<Blam
     blame_state.assign_rest(commits.last().expect("at least one commit").detach());
 
     if blame_state.is_complete() {
-        let b = blame_state.finish();
-        Ok(b)
+        Ok(blame_state.finish())
     } else {
         Err(BlameDiffError::BadArgs)
     }
