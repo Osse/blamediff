@@ -274,19 +274,7 @@ mod tests {
         String::from_utf8(output).expect("valid UTF-8")
     }
 
-    fn run_git_blame(revision: &str) -> Vec<gix::ObjectId> {
-        let output = std::process::Command::new("git")
-            .args(["blame", "--no-abbrev", "--root", "-s", revision, FILE])
-            .output()
-            .expect("able to run git blame")
-            .stdout;
-        output[0..output.len() - 1]
-            .split(|&c| c == b'\n')
-            .map(|l| gix::ObjectId::from_hex(&l[..40]).expect("valid sha1s from git blame"))
-            .collect()
-    }
-
-    fn run_git_blame2(revision: &str) -> Vec<String> {
+    fn run_git_blame(revision: &str) -> Vec<String> {
         let output = std::process::Command::new("git")
             .args(["blame", "--no-abbrev", "--root", "-s", revision, FILE])
             .output()
@@ -308,7 +296,7 @@ mod tests {
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
                 let blame = blame_file(sha1, Path::new(FILE)).unwrap().0;
-                let fasit = run_git_blame2(sha1);
+                let fasit = run_git_blame(sha1);
 
                 let file = get_file(sha1);
 
