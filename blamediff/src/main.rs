@@ -52,11 +52,11 @@ enum Command {
     Blame(BlameArgs),
 }
 
-fn get_object<'a>(
-    repo: &'a Repository,
+fn get_object(
+    repo: &Repository,
     oid: impl Into<hash::ObjectId>,
     kind: object::Kind,
-) -> Result<Object<'a>, BlameDiffError> {
+) -> Result<Object, BlameDiffError> {
     repo.find_object(oid)?
         .peel_to_kind(kind)
         .map_err(|e| e.into())
@@ -145,9 +145,9 @@ fn disk_newer_than_index(
             .as_secs())
 }
 
-fn diff_two_trees<'a, 'b>(
-    tree_old: gix::Tree<'a>,
-    tree_new: gix::Tree<'b>,
+fn diff_two_trees(
+    tree_old: gix::Tree,
+    tree_new: gix::Tree,
     paths: &[&bstr::BStr],
 ) -> Result<(), BlameDiffError> {
     let mut platform = tree_old.changes().unwrap();
@@ -197,7 +197,7 @@ fn diff_with_disk(repo: &Repository, paths: &[&bstr::BStr]) -> Result<(), BlameD
             if disk_newer_than_index(&e.stat, path)? {
                 let disk_contents = std::fs::read_to_string(path)?;
 
-                let blob = get_object(&repo, e.id, object::Kind::Blob)?;
+                let blob = get_object(repo, e.id, object::Kind::Blob)?;
                 let blob_contents = std::str::from_utf8(&blob.data).unwrap();
                 let input =
                     diff::blob::intern::InternedInput::new(blob_contents, disk_contents.as_str());
@@ -225,7 +225,7 @@ fn diff_blob_with_null(
     to_null: bool,
 ) -> Result<(), BlameDiffError> {
     let data = &id.object().unwrap().data;
-    let file = std::str::from_utf8(&data).unwrap();
+    let file = std::str::from_utf8(data).unwrap();
 
     let id = BlobData {
         id: id.detach(),
@@ -261,8 +261,8 @@ fn diff_two_blobs(
     let old_data = &old_id.object().unwrap().data;
     let new_data = &new_id.object().unwrap().data;
 
-    let old_file = std::str::from_utf8(&old_data).expect("valid UTF-8");
-    let new_file = std::str::from_utf8(&new_data).expect("valid UTF-8");
+    let old_file = std::str::from_utf8(old_data).expect("valid UTF-8");
+    let new_file = std::str::from_utf8(new_data).expect("valid UTF-8");
 
     let input = diff::blob::intern::InternedInput::new(old_file, new_file);
 

@@ -9,7 +9,6 @@ pub enum BlameDiffError {
     Io(std::io::Error),
     SystemTime(std::time::SystemTimeError),
     Parse(gix::revision::spec::parse::Error),
-    ParseSingle(gix::revision::spec::parse::single::Error),
     ObtainTree(gix::object::commit::Error),
     StringUtf8Error(std::string::FromUtf8Error),
     StrUtf8Error(std::str::Utf8Error),
@@ -38,7 +37,6 @@ macro_rules! make_error {
     };
 }
 make_error![gix::object::commit::Error, ObtainTree];
-make_error![gix::revision::spec::parse::single::Error, ParseSingle];
 make_error![
     gix::odb::find::existing::Error<gix::odb::store::find::Error>,
     FindObject

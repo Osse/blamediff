@@ -13,7 +13,7 @@ use gix::{
 
 use rangemap::RangeMap;
 
-use crate::collector::Collector;
+use crate::collector::{Collector, Ranges};
 use crate::error::Error;
 
 /// A Blame represents a list of commit IDs, one for each line of the file.
@@ -101,7 +101,7 @@ impl IncompleteBlame {
         let mut ranges = vec![];
 
         // TODO: When group_by becomes stable
-        while slice.len() > 0 {
+        while !slice.is_empty() {
             let mut head_len = 1;
             let mut iter = slice.windows(2);
 
@@ -126,18 +126,18 @@ impl IncompleteBlame {
         let v = self
             .blamed_lines
             .iter()
-            .flat_map(|(r, c)| r.clone().into_iter().map(|_l| c.clone()))
+            .flat_map(|(r, c)| r.clone().map(|_l| *c))
             .collect::<Vec<_>>();
 
         Blame(v)
     }
 }
 
-fn tree_entry<'a>(
-    repo: &'a Repository,
+fn tree_entry(
+    repo: &Repository,
     id: impl Into<gix::ObjectId>,
     path: impl AsRef<Path>,
-) -> Result<Option<object::tree::Entry<'a>>, Error> {
+) -> Result<Option<object::tree::Entry>, Error> {
     repo.find_object(id)?
         .peel_to_tree()?
         .lookup_entry_by_path(path)
@@ -147,12 +147,12 @@ fn tree_entry<'a>(
 fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-) -> Result<Vec<(Range<u32>, Range<u32>)>, Error> {
+) -> Result<Vec<Ranges>, Error> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
-    let old_file = std::str::from_utf8(&old)?;
-    let new_file = std::str::from_utf8(&new)?;
+    let old_file = std::str::from_utf8(old)?;
+    let new_file = std::str::from_utf8(new)?;
 
     let input = InternedInput::new(old_file, new_file);
 
@@ -172,7 +172,7 @@ pub fn blame_file(
     let end = end.map(|v| {
         Spec::from_bstr(
             bstr::BStr::new(v),
-            &repo,
+            repo,
             Options {
                 refs_hint: RefsHint::PreferObject,
                 object_kind_hint: None,
@@ -187,11 +187,11 @@ pub fn blame_file(
         .object()?
         .peel_to_tree()?
         .lookup_entry_by_path(path)?
-        .ok_or(Error::BadArgs)?
+        .ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))?
         .object()?
         .peel_to_kind(gix::object::Kind::Blob)?;
 
-    let contents = String::from_utf8(blob.data.clone())?;
+    let contents = std::str::from_utf8(&blob.data)?;
 
     let mut blame_state = IncompleteBlame::new(contents.lines().count());
 
@@ -217,8 +217,8 @@ pub fn blame_file(
         let commit = c[0];
         let prev_commit = c[1];
 
-        let entry = tree_entry(&repo, commit, path)?;
-        let prev_entry = tree_entry(&repo, prev_commit, path)?;
+        let entry = tree_entry(repo, commit, path)?;
+        let prev_entry = tree_entry(repo, prev_commit, path)?;
 
         match (entry, prev_entry) {
             (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
@@ -246,13 +246,13 @@ pub fn blame_file(
     if blame_state.is_complete() {
         Ok(blame_state.finish())
     } else {
-        Err(Error::BadArgs)
+        Err(Error::Generation)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
     use std::path::Path;
 
     const FILE: &str = "lorem-ipsum.txt";
