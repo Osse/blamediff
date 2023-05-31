@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap},
     ops::Range,
     path::Path,
@@ -76,17 +77,21 @@ impl IncompleteBlame {
 
     fn update_mapping(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
         for (before, after) in ranges {
-            let offset = after.len() as isize - before.len() as isize;
+            let alen = after.len();
+            let blen = before.len();
+            let pos = self.line_mapping.partition_point(|v| *v < after.end);
 
-            let p = self.line_mapping.partition_point(|v| *v < after.end);
+            if alen > blen {
+                let offset = alen - blen;
 
-            if offset < 0 {
-                for v in &mut self.line_mapping[p..] {
-                    *v = *v + (-offset as u32);
+                for v in &mut self.line_mapping[pos..] {
+                    *v -= offset as u32;
                 }
-            } else if offset > 0 {
-                for v in &mut self.line_mapping[p..] {
-                    *v = *v - (offset as u32);
+            } else if blen > alen {
+                let offset = blen - alen;
+
+                for v in &mut self.line_mapping[pos..] {
+                    *v += offset as u32;
                 }
             }
         }
