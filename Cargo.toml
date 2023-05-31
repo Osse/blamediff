@@ -1,13 +1,5 @@
-[package]
-name = "blamediff"
-version = "0.1.0"
-authors = ["Øystein Walle"]
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-gix = "0.44"
-clap = { version = "4.2", features = ["derive"] }
-pretty_assertions = "1.3"
-rangemap = "1.3.0"
+[workspace]
+members = [
+    "blamediff",
+    "gix-blame",
+]

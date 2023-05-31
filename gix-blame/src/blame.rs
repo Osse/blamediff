@@ -1,9 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap},
-    ops::Range,
-    path::Path,
-};
+use std::{ops::Range, path::Path};
 
 use gix::{
     bstr,
@@ -23,8 +18,8 @@ use gix::{
 
 use rangemap::RangeMap;
 
-use crate::error::BlameDiffError;
-use crate::{blame, collector};
+use crate::collector::Collector;
+use crate::error::Error;
 
 /// A Blame represents a list of commit IDs, one for each line of the file.
 #[derive(Debug)]
@@ -147,7 +142,7 @@ fn tree_entry<'a>(
     repo: &'a Repository,
     id: impl Into<gix::ObjectId>,
     path: impl AsRef<Path>,
-) -> Result<Option<object::tree::Entry<'a>>, BlameDiffError> {
+) -> Result<Option<object::tree::Entry<'a>>, Error> {
     repo.find_object(id)?
         .peel_to_tree()?
         .lookup_entry_by_path(path)
@@ -157,7 +152,7 @@ fn tree_entry<'a>(
 fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-) -> Result<Vec<(Range<u32>, Range<u32>)>, BlameDiffError> {
+) -> Result<Vec<(Range<u32>, Range<u32>)>, Error> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
@@ -166,19 +161,17 @@ fn diff_tree_entries(
 
     let input = InternedInput::new(old_file, new_file);
 
-    Ok(diff(
-        Algorithm::Histogram,
-        &input,
-        collector::Collector::new(),
-    ))
+    Ok(diff(Algorithm::Histogram, &input, Collector::new()))
 }
 
+/// Obtain the blame record for the given path starting from the given revision,
+/// optionally limiting it at the end.
 pub fn blame_file(
     repo: &gix::Repository,
     revision: &str,
     path: &Path,
     end: Option<&str>,
-) -> Result<Blame, BlameDiffError> {
+) -> Result<Blame, Error> {
     let head = repo.rev_parse_single(revision)?;
 
     let end = end.map(|v| {
@@ -199,7 +192,7 @@ pub fn blame_file(
         .object()?
         .peel_to_tree()?
         .lookup_entry_by_path(path)?
-        .ok_or(BlameDiffError::BadArgs)?
+        .ok_or(Error::BadArgs)?
         .object()?
         .peel_to_kind(gix::object::Kind::Blob)?;
 
@@ -258,7 +251,7 @@ pub fn blame_file(
     if blame_state.is_complete() {
         Ok(blame_state.finish())
     } else {
-        Err(BlameDiffError::BadArgs)
+        Err(Error::BadArgs)
     }
 }
 

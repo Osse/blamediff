@@ -14,6 +14,7 @@ pub enum BlameDiffError {
     StringUtf8Error(std::string::FromUtf8Error),
     StrUtf8Error(std::str::Utf8Error),
     WalkError(gix::revision::walk::Error),
+    BlameError(gix_blame::error::Error),
 }
 
 impl std::fmt::Display for BlameDiffError {
@@ -52,3 +53,4 @@ make_error![std::time::SystemTimeError, SystemTime];
 make_error![std::str::Utf8Error, StrUtf8Error];
 make_error![std::string::FromUtf8Error, StringUtf8Error];
 make_error![gix::revision::walk::Error, WalkError];
+make_error![gix_blame::error::Error, BlameError];

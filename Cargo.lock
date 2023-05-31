@@ -105,8 +105,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gix",
- "pretty_assertions",
- "rangemap",
+ "gix_blame",
 ]
 
 [[package]]
@@ -935,6 +934,15 @@ dependencies = [
  "gix-path",
  "io-close",
  "thiserror",
+]
+
+[[package]]
+name = "gix_blame"
+version = "0.1.0"
+dependencies = [
+ "gix",
+ "pretty_assertions",
+ "rangemap",
 ]
 
 [[package]]

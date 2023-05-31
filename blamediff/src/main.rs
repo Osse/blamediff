@@ -17,8 +17,6 @@ use gix::{diff, discover, hash, index, object, objs, Object, Repository};
 mod error;
 use error::BlameDiffError;
 
-mod blame;
-mod collector;
 mod log;
 
 #[derive(Args)]
@@ -290,6 +288,6 @@ fn diff_two_blobs(
 
 fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
     let repo = gix::discover(".")?;
-    blame::blame_file(&repo, &ba.revision, &ba.path, None);
+    gix_blame::blame::blame_file(&repo, &ba.revision, &ba.path, None)?;
     Ok(())
 }
