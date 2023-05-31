@@ -99,18 +99,18 @@ impl IncompleteBlame {
 
     fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
         let mut true_lines = vec![];
-        for l in fake_lines {
-            for (k, v) in self.line_mapping.iter().enumerate() {
-                if *v == l {
-                    true_lines.push(k as u32);
+        for fake_line in fake_lines {
+            for (true_line, mapped_line) in self.line_mapping.iter().enumerate() {
+                if *mapped_line == fake_line {
+                    true_lines.push(true_line as u32);
                 }
             }
         }
 
         let mut slice: &[u32] = &true_lines;
-
         let mut ranges = vec![];
 
+        // TODO: When group_by becomes stable
         while slice.len() > 0 {
             let mut head_len = 1;
             let mut iter = slice.windows(2);
