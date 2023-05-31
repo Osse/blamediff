@@ -267,20 +267,7 @@ mod tests {
     use pretty_assertions::{assert_eq, assert_ne};
     use std::path::Path;
 
-    use super::blame_file;
-
     const FILE: &str = "lorem-ipsum.txt";
-
-    fn get_file(revision: &str) -> String {
-        let revision = revision.to_string() + ":" + FILE;
-
-        let output = std::process::Command::new("git")
-            .args(["show", &revision])
-            .output()
-            .expect("able to run git show")
-            .stdout;
-        String::from_utf8(output).expect("valid UTF-8")
-    }
 
     // Return list of strings in the format "SHA1 SP <line contents>"
     fn run_git_blame(revision: &str) -> Vec<String> {
@@ -319,12 +306,22 @@ mod tests {
     }
 
     fn compare(sha1: &str, blame: Vec<gix::ObjectId>, fasit: Vec<String>, message: &str) {
-        let file = get_file(sha1);
+        let blob = sha1.to_string() + ":" + FILE;
 
+        let output = std::process::Command::new("git")
+            .args(["show", &blob])
+            .output()
+            .expect("able to run git show")
+            .stdout;
+
+        let contents = std::str::from_utf8(&output).expect("valid UTF-8");
+
+        // Create a Vec of Strings similar to the one obtained from git itself.
+        // This with pretty assertions makes it much more pleasant to debug
         let blame: Vec<String> = blame
             .into_iter()
-            .zip(file.lines())
-            .map(|(f, l)| f.to_string() + " " + l)
+            .zip(contents.lines())
+            .map(|(id, line)| id.to_string() + " " + line)
             .collect();
 
         assert_eq!(fasit.len(), blame.len(), "{}", message);
