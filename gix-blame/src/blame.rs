@@ -2,18 +2,13 @@ use std::{ops::Range, path::Path};
 
 use gix::{
     bstr,
-    diff::blob::{
-        diff,
-        intern::{InternedInput, Interner, Token},
-        Algorithm, Sink,
-    },
-    discover, hash, index, object, objs,
-    odb::pack::multi_index::chunk::offsets,
+    diff::blob::{diff, intern::InternedInput, Algorithm},
+    object,
     revision::{
         spec::parse::{Options, RefsHint},
         Spec,
     },
-    Id, Object, Repository,
+    Repository,
 };
 
 use rangemap::RangeMap;

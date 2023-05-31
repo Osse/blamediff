@@ -1,8 +1,6 @@
-use std::{ops::Range, path::Path};
+use std::{ops::Range};
 
 use gix::diff::blob::{
-    diff,
-    intern::{InternedInput, Token},
     Sink,
 };
 
