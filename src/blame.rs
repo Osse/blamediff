@@ -173,9 +173,12 @@ fn diff_tree_entries(
     ))
 }
 
-pub fn blame_file(revision: &str, path: &Path, end: Option<&str>) -> Result<Blame, BlameDiffError> {
-    let repo = discover(".")?;
-
+pub fn blame_file(
+    repo: &gix::Repository,
+    revision: &str,
+    path: &Path,
+    end: Option<&str>,
+) -> Result<Blame, BlameDiffError> {
     let head = repo.rev_parse_single(revision)?;
 
     let end = end.map(|v| {
@@ -311,6 +314,10 @@ mod tests {
         run_git_blame(&range)
     }
 
+    fn run_blame_file(sha1: &str, end: Option<&str>) -> super::Blame {
+        super::blame_file(&gix::discover(".").unwrap(), sha1, Path::new(FILE), end).unwrap()
+    }
+
     fn compare(sha1: &str, blame: Vec<gix::ObjectId>, fasit: Vec<String>, message: &str) {
         let file = get_file(sha1);
 
@@ -329,7 +336,7 @@ mod tests {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
-                let blame = blame_file(sha1, Path::new(FILE), None).unwrap().0;
+                let blame = run_blame_file(sha1, None).0;
                 let fasit = run_git_blame(sha1);
                 compare(sha1, blame, fasit, $message);
             }
@@ -338,17 +345,14 @@ mod tests {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
-                let blame = blame_file(sha1, Path::new(FILE), Some($sha1end)).unwrap().0;
+                let blame = run_blame_file(sha1, Path::new(FILE), Some($sha1end)).0;
                 let fasit = run_git_blame_with_end(sha1, $sha1end);
                 compare(sha1, blame, fasit, $message);
             }
         };
     }
 
-    // for i in ${(f)"$(git log --reverse --format='blame_test!(t%%02d_%h, "%s");\n' first-test)"}; do
-    //     n=$a[(Ie)$i]
-    //     printf $i $n
-    // done
+    // git log --reverse --format='%h%x09%s' first-test | awk -F'\t' '{ printf("blame_test!(t%02d_%s, \"%s\");\n", NR, $1, $2) }'
 
     blame_test!(t01_753d1db, "Initial commit");
     blame_test!(t02_f28f649, "Simple change");
@@ -362,4 +366,5 @@ mod tests {
     blame_test!(t10_8bf8780, "Simple change but a bit bigger");
     blame_test!(t11_f7a3a57, "Remove a lot");
     blame_test!(t12_392db1b, "Add a lot and blank lines");
+    blame_test!(t13_1050bf8, "Multiple changes in one commit again");
 }

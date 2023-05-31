@@ -289,6 +289,7 @@ fn diff_two_blobs(
 }
 
 fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
-    blame::blame_file(&ba.revision, &ba.path, None);
+    let repo = gix::discover(".")?;
+    blame::blame_file(&repo, &ba.revision, &ba.path, None);
     Ok(())
 }
