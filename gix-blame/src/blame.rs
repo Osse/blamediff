@@ -260,7 +260,7 @@ mod tests {
     // Return list of strings in the format "SHA1 SP <line contents>"
     fn run_git_blame(revision: &str) -> Vec<String> {
         let output = std::process::Command::new("git")
-            .args(["blame", "--porcelain", revision, FILE])
+            .args(["-C", "..", "blame", "--porcelain", revision, FILE])
             .output()
             .expect("able to run git blame")
             .stdout;
