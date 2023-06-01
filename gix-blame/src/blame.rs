@@ -18,23 +18,47 @@ use crate::error::Error;
 
 /// A Blame represents a list of commit IDs, one for each line of the file.
 #[derive(Debug)]
-pub struct Blame(Vec<gix::ObjectId>);
+pub struct Blame {
+    ids: Vec<gix::ObjectId>,
+    contents: String,
+}
+
+impl Blame {
+    /// Returns a slice of ObjectIDs; one for each line of the blamed file. The
+    /// list most likely contains both consecutive and non-consecutive
+    /// duplicates.
+    pub fn object_ids(&self) -> &[gix::ObjectId] {
+        &self.ids
+    }
+
+    /// Returns a vector of strings of the form: ID SPACE line
+    pub fn blame(&self) -> Vec<String> {
+        self.ids
+            .iter()
+            .zip(self.contents.lines())
+            .map(|(id, line)| id.to_string() + " " + line)
+            .collect()
+    }
+}
 
 #[derive(Debug)]
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, gix::ObjectId>,
     total_range: Range<u32>,
     line_mapping: Vec<u32>,
+    contents: String,
 }
 
 impl IncompleteBlame {
-    fn new(lines: usize) -> Self {
+    fn new(contents: String) -> Self {
+        let lines = contents.lines().count();
         let total_range = 0..lines as u32;
 
         Self {
             blamed_lines: RangeMap::new(),
             total_range: total_range.clone(),
             line_mapping: Vec::from_iter(total_range),
+            contents,
         }
     }
 
@@ -123,13 +147,16 @@ impl IncompleteBlame {
     }
 
     fn finish(self) -> Blame {
-        let v = self
+        let ids = self
             .blamed_lines
             .iter()
             .flat_map(|(r, c)| r.clone().map(|_l| *c))
             .collect::<Vec<_>>();
 
-        Blame(v)
+        Blame {
+            ids,
+            contents: self.contents,
+        }
     }
 }
 
@@ -191,9 +218,9 @@ pub fn blame_file(
         .object()?
         .peel_to_kind(gix::object::Kind::Blob)?;
 
-    let contents = std::str::from_utf8(&blob.data)?;
+    let contents = std::str::from_utf8(&blob.data)?.to_string();
 
-    let mut blame_state = IncompleteBlame::new(contents.lines().count());
+    let mut blame_state = IncompleteBlame::new(contents);
 
     let rev_walker = repo.rev_walk(std::iter::once(head));
 
@@ -321,7 +348,7 @@ mod tests {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
-                let blame = run_blame_file(sha1, None).0;
+                let blame = run_blame_file(sha1, None).ids;
                 let fasit = run_git_blame(sha1);
                 compare(sha1, blame, fasit, $message);
             }
@@ -330,7 +357,7 @@ mod tests {
             #[test]
             fn $sha1() {
                 let sha1 = &stringify!($sha1)[4..];
-                let blame = run_blame_file(sha1, Path::new(FILE), Some($sha1end)).0;
+                let blame = run_blame_file(sha1, Path::new(FILE), Some($sha1end)).ids;
                 let fasit = run_git_blame_with_end(sha1, $sha1end);
                 compare(sha1, blame, fasit, $message);
             }

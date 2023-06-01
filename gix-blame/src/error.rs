@@ -1,3 +1,4 @@
+/// The error produced if a complete blame cannot be produced.
 #[derive(Debug)]
 pub enum Error {
     Generation,
@@ -11,7 +12,15 @@ pub enum Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "other badness")
+        match self {
+            Error::Generation => write!(f, "Internal generation error"),
+            Error::NotFound(e) => write!(f, "Path not found in tree: {}", e),
+            Error::PeelError(e) => write!(f, "Error finding blob in object: {}", e),
+            Error::FindObject(e) => write!(f, "Error finding object: {}", e),
+            Error::ParseSingle(e) => write!(f, "Error parsing revision: {}", e),
+            Error::StrUtf8Error(e) => write!(f, "Error converting data to string: {}", e),
+            Error::WalkError(e) => write!(f, "Error walking the history: {}", e),
+        }
     }
 }
 

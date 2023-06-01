@@ -1,4 +1,7 @@
-pub mod blame;
-pub use blame::blame_file;
+mod blame;
+pub use blame::*;
+
+mod error;
+pub use error::*;
+
 mod collector;
-pub mod error;

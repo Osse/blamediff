@@ -56,34 +56,18 @@ fn get_object(
     repo: &Repository,
     oid: impl Into<hash::ObjectId>,
     kind: object::Kind,
-) -> Result<Object, BlameDiffError> {
+) -> anyhow::Result<Object> {
     repo.find_object(oid)?
         .peel_to_kind(kind)
         .map_err(|e| e.into())
 }
 
-fn resolve_tree<'a>(
-    repo: &'a Repository,
-    object: &bstr::BStr,
-) -> Result<gix::Tree<'a>, BlameDiffError> {
-    let object = repo
-        .rev_parse(object)?
-        .single()
-        .ok_or(BlameDiffError::BadArgs)?;
-
+fn resolve_tree<'a>(repo: &'a Repository, object: &bstr::BStr) -> anyhow::Result<gix::Tree<'a>> {
+    let object = repo.rev_parse_single(object)?;
     get_object(repo, object, object::Kind::Tree).map(|o| o.into_tree())
 }
 
-fn main() -> Result<(), BlameDiffError> {
-    // let mut r = rangemap::RangeMap::<u32, Range<u32>>::new();
-
-    // r.insert(0..100, 0..100);
-    // r.insert(10..15, 9..11);
-    // r.insert(17..20, 3);
-
-    // Decrement by one
-    // for i in r.overlapping(&(5..25)) {}
-
+fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
 
     match args.command {
@@ -104,7 +88,7 @@ const DEV_NULL: BlobData = BlobData {
     id: gix::ObjectId::empty_blob(gix::index::hash::Kind::Sha1),
 };
 
-fn cmd_diff(da: DiffArgs) -> Result<(), BlameDiffError> {
+fn cmd_diff(da: DiffArgs) -> anyhow::Result<()> {
     let repo = discover(".")?;
 
     let prefix = repo.prefix().expect("have worktree")?;
@@ -135,7 +119,7 @@ fn cmd_diff(da: DiffArgs) -> Result<(), BlameDiffError> {
 fn disk_newer_than_index(
     stat: &index::entry::Stat,
     path: &std::path::Path,
-) -> Result<bool, BlameDiffError> {
+) -> anyhow::Result<bool> {
     let fs_stat = std::fs::symlink_metadata(path)?;
 
     Ok((stat.mtime.secs as u64)
@@ -149,12 +133,12 @@ fn diff_two_trees(
     tree_old: gix::Tree,
     tree_new: gix::Tree,
     paths: &[&bstr::BStr],
-) -> Result<(), BlameDiffError> {
-    let mut platform = tree_old.changes().unwrap();
+) -> anyhow::Result<()> {
+    let mut platform = tree_old.changes()?;
 
     platform.track_path();
 
-    platform.for_each_to_obtain_tree(&tree_new, |c| {
+    let _outcome = platform.for_each_to_obtain_tree(&tree_new, |c| {
         use object::tree::diff::change::Event::*;
         let path = c.location;
         if paths.is_empty() || paths.iter().any(|&p| p == path) {
@@ -183,22 +167,23 @@ fn diff_two_trees(
             Ok(object::tree::diff::Action::Continue)
         }
     });
+
     Ok(())
 }
 
-fn diff_with_disk(repo: &Repository, paths: &[&bstr::BStr]) -> Result<(), BlameDiffError> {
-    let index = repo.open_index().unwrap();
+fn diff_with_disk(repo: &Repository, paths: &[&bstr::BStr]) -> anyhow::Result<()> {
+    let index = repo.open_index()?;
     for e in index.entries() {
         let p = e.path(&index);
 
         if paths.is_empty() || paths.iter().any(|&pp| pp == p) {
-            let path = std::path::Path::new(p.to_str().unwrap());
+            let path = std::path::Path::new(p.to_str()?);
 
             if disk_newer_than_index(&e.stat, path)? {
                 let disk_contents = std::fs::read_to_string(path)?;
 
                 let blob = get_object(repo, e.id, object::Kind::Blob)?;
-                let blob_contents = std::str::from_utf8(&blob.data).unwrap();
+                let blob_contents = std::str::from_utf8(&blob.data)?;
                 let input =
                     diff::blob::intern::InternedInput::new(blob_contents, disk_contents.as_str());
 
@@ -224,8 +209,8 @@ fn diff_blob_with_null(
     path: &bstr::BStr,
     to_null: bool,
 ) -> Result<(), BlameDiffError> {
-    let data = &id.object().unwrap().data;
-    let file = std::str::from_utf8(data).unwrap();
+    let data = &id.object()?.data;
+    let file = std::str::from_utf8(data)?;
 
     let id = BlobData {
         id: id.detach(),
@@ -258,11 +243,11 @@ fn diff_two_blobs(
     new_id: gix::Id,
     path: &bstr::BStr,
 ) -> Result<(), BlameDiffError> {
-    let old_data = &old_id.object().unwrap().data;
-    let new_data = &new_id.object().unwrap().data;
+    let old_data = &old_id.object()?.data;
+    let new_data = &new_id.object()?.data;
 
-    let old_file = std::str::from_utf8(old_data).expect("valid UTF-8");
-    let new_file = std::str::from_utf8(new_data).expect("valid UTF-8");
+    let old_file = std::str::from_utf8(old_data)?;
+    let new_file = std::str::from_utf8(new_data)?;
 
     let input = diff::blob::intern::InternedInput::new(old_file, new_file);
 
@@ -286,8 +271,11 @@ fn diff_two_blobs(
     Ok(())
 }
 
-fn cmd_blame(ba: BlameArgs) -> Result<(), BlameDiffError> {
+fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
     let repo = gix::discover(".")?;
-    gix_blame::blame::blame_file(&repo, &ba.revision, &ba.path, None)?;
+    let b = gix_blame::blame_file(&repo, &ba.revision, &ba.path, None)?;
+    for line in b.blame() {
+        println!("{line}");
+    }
     Ok(())
 }
