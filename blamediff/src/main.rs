@@ -6,6 +6,7 @@ mod diffprinter;
 
 use std::path::PathBuf;
 
+use anyhow::Context;
 use diffprinter::UnifiedDiffBuilder;
 use gix::bstr::ByteSlice;
 use gix::{bstr, config::tree::Diff};
@@ -13,6 +14,8 @@ use gix::{bstr, config::tree::Diff};
 use clap::{Args, Parser, Subcommand};
 
 use gix::{diff, discover, hash, index, object, objs, Object, Repository};
+
+use time::macros::format_description;
 
 mod error;
 use error::BlameDiffError;
@@ -274,8 +277,21 @@ fn diff_two_blobs(
 fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
     let repo = gix::discover(".")?;
     let b = gix_blame::blame_file(&repo, &ba.revision, &ba.path, None)?;
-    for line in b.blame() {
-        println!("{line}");
+    let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]");
+
+    for bl in b.blame() {
+        let c = repo.find_object(bl.id)?.into_commit();
+
+        let author = c.author().context("getting commit author")?;
+        let name = author.name;
+        let timestamp = author.time.format(format);
+        let short_hash = c.id.to_hex_with_len(8);
+
+        println!(
+            "{short_hash} ({name} {timestamp} {:3}) {}",
+            bl.line, bl.line_no
+        );
     }
+
     Ok(())
 }

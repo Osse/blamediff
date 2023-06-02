@@ -16,7 +16,21 @@ use rangemap::RangeMap;
 use crate::collector::{Collector, Ranges};
 use crate::error::Error;
 
-/// A Blame represents a list of commit IDs, one for each line of the file.
+///  A line from the input file with blame information.
+pub struct BlamedLine<'a> {
+    /// The ID of the commit to blame for this line
+    pub id: gix::ObjectId,
+
+    /// The line number of the line in the current revision
+    pub line_no: usize,
+
+    /// The line contents themselves
+    pub line: &'a str,
+}
+
+/// A Blame represents a list of blamed lines in a file. Conceptually it's a
+/// list of commit IDs in the order of the lines in the file the Blame was
+/// requested for.
 #[derive(Debug)]
 pub struct Blame {
     ids: Vec<gix::ObjectId>,
@@ -24,19 +38,23 @@ pub struct Blame {
 }
 
 impl Blame {
-    /// Returns a slice of ObjectIDs; one for each line of the blamed file. The
+    /// Returns a slice of `ObjectID`s; one for each line of the blamed file. The
     /// list most likely contains both consecutive and non-consecutive
     /// duplicates.
     pub fn object_ids(&self) -> &[gix::ObjectId] {
         &self.ids
     }
 
-    /// Returns a vector of strings of the form: ID SPACE line
-    pub fn blame(&self) -> Vec<String> {
+    /// Returns a list of `BlamedLine`s.
+    pub fn blame(&self) -> Vec<BlamedLine> {
         self.ids
             .iter()
-            .zip(self.contents.lines())
-            .map(|(id, line)| id.to_string() + " " + line)
+            .zip(self.contents.lines().enumerate())
+            .map(|(id, (line_no, line))| BlamedLine {
+                id: *id,
+                line_no,
+                line,
+            })
             .collect()
     }
 }

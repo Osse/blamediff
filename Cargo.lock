@@ -113,6 +113,7 @@ dependencies = [
  "clap",
  "gix",
  "gix_blame",
+ "time",
 ]
 
 [[package]]
