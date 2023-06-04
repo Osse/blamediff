@@ -374,27 +374,13 @@ mod tests {
         ($sha1:ident, $sha1end:expr, $message:literal) => {
             #[test]
             fn $sha1() {
-                let sha1 = &stringify!($sha1)[4..];
-                let blame = run_blame_file(sha1, Path::new(FILE), Some($sha1end)).ids;
+                let sha1 = &stringify!($sha1)[7..];
+                let blame = run_blame_file(sha1, Some($sha1end)).ids;
                 let fasit = run_git_blame_with_end(sha1, $sha1end);
                 compare(sha1, blame, fasit, $message);
             }
         };
     }
 
-    // git log --reverse --format='%h%x09%s' first-test | awk -F'\t' '{ printf("blame_test!(t%02d_%s, \"%s\");\n", NR, $1, $2) }'
-
-    blame_test!(t01_753d1db, "Initial commit");
-    blame_test!(t02_f28f649, "Simple change");
-    blame_test!(t03_d3baed3, "Removes more than it adds");
-    blame_test!(t04_536a0f5, "Adds more than it removes");
-    blame_test!(t05_6a30c80, "Change on first line");
-    blame_test!(t06_4d8a3c7, "Multiple changes in one commit");
-    blame_test!(t07_2064b3c, "Change on last line");
-    blame_test!(t08_0e17ccb, "Blank line in context");
-    blame_test!(t09_3be8265, "Indent and overlap with previous change.");
-    blame_test!(t10_8bf8780, "Simple change but a bit bigger");
-    blame_test!(t11_f7a3a57, "Remove a lot");
-    blame_test!(t12_392db1b, "Add a lot and blank lines");
-    blame_test!(t13_1050bf8, "Multiple changes in one commit again");
+    include!(concat!(env!("OUT_DIR"), "/tests.rs"));
 }
