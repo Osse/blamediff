@@ -21,6 +21,8 @@ pub struct BlamedLine<'a> {
     /// The ID of the commit to blame for this line
     pub id: gix::ObjectId,
 
+    pub boundary: bool,
+
     /// The line number of the line in the current revision
     pub line_no: usize,
 
@@ -33,7 +35,7 @@ pub struct BlamedLine<'a> {
 /// requested for.
 #[derive(Debug)]
 pub struct Blame {
-    ids: Vec<gix::ObjectId>,
+    ids: Vec<(bool, gix::ObjectId)>,
     contents: String,
 }
 
@@ -41,7 +43,7 @@ impl Blame {
     /// Returns a slice of `ObjectID`s; one for each line of the blamed file. The
     /// list most likely contains both consecutive and non-consecutive
     /// duplicates.
-    pub fn object_ids(&self) -> &[gix::ObjectId] {
+    pub fn object_ids(&self) -> &[(bool, gix::ObjectId)] {
         &self.ids
     }
 
@@ -51,7 +53,8 @@ impl Blame {
             .iter()
             .zip(self.contents.lines().enumerate())
             .map(|(id, (line_no, line))| BlamedLine {
-                id: *id,
+                id: id.1,
+                boundary: id.0,
                 line_no,
                 line,
             })
@@ -61,7 +64,7 @@ impl Blame {
 
 #[derive(Debug)]
 struct IncompleteBlame {
-    blamed_lines: RangeMap<u32, gix::ObjectId>,
+    blamed_lines: RangeMap<u32, (bool, gix::ObjectId)>,
     total_range: Range<u32>,
     line_mapping: Vec<u32>,
     contents: String,
@@ -80,16 +83,20 @@ impl IncompleteBlame {
         }
     }
 
-    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
+    fn raw_assign(&mut self, lines: Range<u32>, boundary: bool, id: gix::ObjectId) {
         let gaps = self.blamed_lines.gaps(&lines).collect::<Vec<_>>();
 
         for r in gaps {
-            self.blamed_lines.insert(r, id)
+            self.blamed_lines.insert(r, (boundary, id))
         }
     }
 
+    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
+        self.raw_assign(lines, false, id)
+    }
+
     fn assign_rest(&mut self, id: gix::ObjectId) {
-        self.assign(self.total_range.clone(), id)
+        self.raw_assign(self.total_range.clone(), true, id)
     }
 
     fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
@@ -305,7 +312,7 @@ mod tests {
     // Return list of strings in the format "SHA1 SP <line contents>"
     fn run_git_blame(revision: &str) -> Vec<String> {
         let output = std::process::Command::new("git")
-            .args(["-C", "..", "blame", "--porcelain", revision, FILE])
+            .args(["-C", "..", "blame", "--line-porcelain", revision, FILE])
             .output()
             .expect("able to run git blame")
             .stdout;
@@ -314,18 +321,16 @@ mod tests {
 
         output
             .split_terminator('\n')
-            .filter_map(|line| {
-                if line.len() > 41 && line[0..40].bytes().all(|b| b.is_ascii_hexdigit()) {
-                    Some(&line[0..40])
-                } else if line.starts_with('\t') {
-                    Some(&line[1..])
-                } else {
-                    None
-                }
-            })
             .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|c| c[0].to_owned() + " " + c[1])
+            .chunks(13)
+            .map(|c| {
+                format!(
+                    "{} {} {}",
+                    &c[0][..40],
+                    c[10].starts_with("boundary"),
+                    &c[12][1..]
+                )
+            })
             .collect()
     }
 
@@ -338,7 +343,7 @@ mod tests {
         super::blame_file(&gix::discover(".").unwrap(), sha1, Path::new(FILE), end).unwrap()
     }
 
-    fn compare(sha1: &str, blame: Vec<gix::ObjectId>, fasit: Vec<String>, message: &str) {
+    fn compare(sha1: &str, blame: Vec<(bool, gix::ObjectId)>, fasit: Vec<String>, message: &str) {
         let blob = sha1.to_string() + ":" + FILE;
 
         let output = std::process::Command::new("git")
@@ -354,7 +359,7 @@ mod tests {
         let blame: Vec<String> = blame
             .into_iter()
             .zip(contents.lines())
-            .map(|(id, line)| id.to_string() + " " + line)
+            .map(|(id, line)| format!("{} {} {}", id.1.to_string(), id.0, line))
             .collect();
 
         assert_eq!(fasit.len(), blame.len(), "{}", message);

@@ -12,3 +12,4 @@ clap = { version = "4.2", features = ["derive"] }
 gix_blame = { path = "../gix-blame" }
 anyhow = "1"
 time = "0.3"
+itertools = "0.10"

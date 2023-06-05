@@ -22,6 +22,8 @@ use error::BlameDiffError;
 
 mod log;
 
+use itertools::Itertools;
+
 #[derive(Args)]
 struct DiffArgs {
     /// Old commit to diff
@@ -71,6 +73,57 @@ fn resolve_tree<'a>(repo: &'a Repository, object: &bstr::BStr) -> anyhow::Result
 }
 
 fn main() -> anyhow::Result<()> {
+    //     let s = r##"hello
+    // world
+    // man i man the best
+    // yesyesyes
+    // XTAB!!!!
+    // more stuff
+    // more stuff
+    // more stuff
+    // o
+    // o
+    // o
+    // XTAB AGAIN!
+    // ededed
+    // Xegfeswf
+    // "##;
+
+    //     let mut u = 0;
+
+    //     let g = s.lines().group_by(|g| {
+    //         if g.starts_with('X') {
+    //             u += 1;
+    //             u - 1
+    //         } else {
+    //             u
+    //         }
+    //     });
+
+    //     for (b, l) in g.into_iter() {
+    //         dbg!(b, l.collect::<Vec<_>>());
+    //     }
+
+    // for group in lines.split_inclusive(|&l| l.starts_with(' ')) {
+    //     for line in group {
+    //         println!("{line}");
+    //     }
+    //     println!("END");
+    // }
+    // loop {
+    //     match lines.by_ref().position(|l| l.starts_with(' ')) {
+    //         Some(n) => {
+    //             for i in lines.by_ref().take(n) {
+    //                 dbg!(i);
+    //             }
+    //         }
+    //         None => break,
+    //     }
+    //     println!("");
+    // }
+    //
+    // return Ok(());
+
     let args = Cli::parse();
 
     match args.command {
@@ -277,7 +330,9 @@ fn diff_two_blobs(
 fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
     let repo = gix::discover(".")?;
     let b = gix_blame::blame_file(&repo, &ba.revision, &ba.path, None)?;
-    let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]");
+    let format = format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]"
+    );
 
     for bl in b.blame() {
         let c = repo.find_object(bl.id)?.into_commit();
@@ -285,11 +340,16 @@ fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
         let author = c.author().context("getting commit author")?;
         let name = author.name;
         let timestamp = author.time.format(format);
-        let short_hash = c.id.to_hex_with_len(8);
+        let (boundary, short_hash) = if bl.boundary {
+            ("^", c.id.to_hex_with_len(7))
+        } else {
+            ("", c.id.to_hex_with_len(8))
+        };
 
         println!(
-            "{short_hash} ({name} {timestamp} {:3}) {}",
-            bl.line, bl.line_no
+            "{boundary}{short_hash} ({name} {timestamp} {:2}) {}",
+            bl.line_no + 1,
+            bl.line,
         );
     }
 
