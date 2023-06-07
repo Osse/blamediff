@@ -5,6 +5,7 @@ pub enum Error {
     NotFound(std::io::Error),
     PeelError(gix::object::peel::to_kind::Error),
     FindObject(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
+    SystemTime(std::time::SystemTimeError),
     ParseSingle(gix::revision::spec::parse::single::Error),
     StrUtf8Error(std::str::Utf8Error),
     WalkError(gix::revision::walk::Error),
@@ -20,6 +21,7 @@ impl std::fmt::Display for Error {
             Error::ParseSingle(e) => write!(f, "Error parsing revision: {}", e),
             Error::StrUtf8Error(e) => write!(f, "Error converting data to string: {}", e),
             Error::WalkError(e) => write!(f, "Error walking the history: {}", e),
+            Error::SystemTime(e) => write!(f, "Error finding timestamp: {}", e),
         }
     }
 }
@@ -35,6 +37,7 @@ macro_rules! make_error {
         }
     };
 }
+make_error![std::time::SystemTimeError, SystemTime];
 make_error![gix::revision::spec::parse::single::Error, ParseSingle];
 make_error![
     gix::odb::find::existing::Error<gix::odb::store::find::Error>,

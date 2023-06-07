@@ -22,8 +22,6 @@ use error::BlameDiffError;
 
 mod log;
 
-use itertools::Itertools;
-
 #[derive(Args)]
 struct DiffArgs {
     /// Old commit to diff
@@ -73,57 +71,6 @@ fn resolve_tree<'a>(repo: &'a Repository, object: &bstr::BStr) -> anyhow::Result
 }
 
 fn main() -> anyhow::Result<()> {
-    //     let s = r##"hello
-    // world
-    // man i man the best
-    // yesyesyes
-    // XTAB!!!!
-    // more stuff
-    // more stuff
-    // more stuff
-    // o
-    // o
-    // o
-    // XTAB AGAIN!
-    // ededed
-    // Xegfeswf
-    // "##;
-
-    //     let mut u = 0;
-
-    //     let g = s.lines().group_by(|g| {
-    //         if g.starts_with('X') {
-    //             u += 1;
-    //             u - 1
-    //         } else {
-    //             u
-    //         }
-    //     });
-
-    //     for (b, l) in g.into_iter() {
-    //         dbg!(b, l.collect::<Vec<_>>());
-    //     }
-
-    // for group in lines.split_inclusive(|&l| l.starts_with(' ')) {
-    //     for line in group {
-    //         println!("{line}");
-    //     }
-    //     println!("END");
-    // }
-    // loop {
-    //     match lines.by_ref().position(|l| l.starts_with(' ')) {
-    //         Some(n) => {
-    //             for i in lines.by_ref().take(n) {
-    //                 dbg!(i);
-    //             }
-    //         }
-    //         None => break,
-    //     }
-    //     println!("");
-    // }
-    //
-    // return Ok(());
-
     let args = Cli::parse();
 
     match args.command {
@@ -334,7 +281,7 @@ fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
         "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]"
     );
 
-    for bl in b.blame() {
+    for bl in b.blamed_lines() {
         let c = repo.find_object(bl.id)?.into_commit();
 
         let author = c.author().context("getting commit author")?;

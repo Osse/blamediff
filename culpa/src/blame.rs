@@ -3,7 +3,7 @@ use std::{ops::Range, path::Path};
 use gix::{
     bstr,
     diff::blob::{diff, intern::InternedInput, Algorithm},
-    object,
+    index, object,
     revision::{
         spec::parse::{Options, RefsHint},
         Spec,
@@ -21,10 +21,14 @@ pub struct BlamedLine<'a> {
     /// The ID of the commit to blame for this line
     pub id: gix::ObjectId,
 
+    /// Whether or not this commit was a boundary commit
     pub boundary: bool,
 
     /// The line number of the line in the current revision
     pub line_no: usize,
+
+    /// The line number of the line in the revision that introduced it
+    pub orig_line_no: usize,
 
     /// The line contents themselves
     pub line: &'a str,
@@ -40,15 +44,14 @@ pub struct Blame {
 }
 
 impl Blame {
-    /// Returns a slice of `ObjectID`s; one for each line of the blamed file. The
-    /// list most likely contains both consecutive and non-consecutive
-    /// duplicates.
+    /// Returns a slice of [`gix::ObjectId`]s, one for each line of the blamed file. The
+    /// list most likely contains both consecutive and non-consecutive duplicates.
     pub fn object_ids(&self) -> &[(bool, gix::ObjectId)] {
         &self.ids
     }
 
-    /// Returns a list of `BlamedLine`s.
-    pub fn blame(&self) -> Vec<BlamedLine> {
+    /// Returns a list of [`BlamedLine`]s.
+    pub fn blamed_lines(&self) -> Vec<BlamedLine> {
         self.ids
             .iter()
             .zip(self.contents.lines().enumerate())
@@ -56,6 +59,7 @@ impl Blame {
                 id: id.1,
                 boundary: id.0,
                 line_no,
+                orig_line_no: line_no, // TODO
                 line,
             })
             .collect()
@@ -209,6 +213,16 @@ fn diff_tree_entries(
     let input = InternedInput::new(old_file, new_file);
 
     Ok(diff(Algorithm::Histogram, &input, Collector::new()))
+}
+
+fn disk_newer_than_index(stat: &index::entry::Stat, path: &std::path::Path) -> Result<bool, Error> {
+    let fs_stat = std::fs::symlink_metadata(path)?;
+
+    Ok((stat.mtime.secs as u64)
+        < fs_stat
+            .modified()?
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)?
+            .as_secs())
 }
 
 /// Obtain the blame record for the given path starting from the given revision,
