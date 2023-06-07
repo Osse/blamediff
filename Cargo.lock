@@ -111,9 +111,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "culpa",
  "gix",
- "gix_blame",
- "itertools",
  "time",
 ]
 
@@ -294,6 +293,15 @@ checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
 dependencies = [
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "culpa"
+version = "0.1.0"
+dependencies = [
+ "gix",
+ "pretty_assertions",
+ "rangemap",
 ]
 
 [[package]]
@@ -946,15 +954,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gix_blame"
-version = "0.1.0"
-dependencies = [
- "gix",
- "pretty_assertions",
- "rangemap",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1068,15 +1067,6 @@ dependencies = [
  "io-lifetimes",
  "rustix 0.36.8",
  "windows-sys 0.45.0",
-]
-
-[[package]]
-name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
 ]
 
 [[package]]

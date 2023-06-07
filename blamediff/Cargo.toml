@@ -9,7 +9,6 @@ edition = "2021"
 [dependencies]
 gix = "0.44"
 clap = { version = "4.2", features = ["derive"] }
-gix_blame = { path = "../gix-blame" }
+culpa = { path = "../culpa" }
 anyhow = "1"
 time = "0.3"
-itertools = "0.10"

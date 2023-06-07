@@ -1,5 +1,5 @@
 [package]
-name = "gix_blame"
+name = "culpa"
 version = "0.1.0"
 authors = ["Øystein Walle"]
 edition = "2021"
