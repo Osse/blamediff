@@ -2,6 +2,7 @@
 #[derive(Debug)]
 pub enum Error {
     Generation,
+    InvalidRange,
     NotFound(std::io::Error),
     PeelError(gix::object::peel::to_kind::Error),
     FindObject(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
@@ -16,6 +17,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Generation => write!(f, "Internal generation error"),
+            Error::InvalidRange => write!(f, "Invalid range provided"),
             Error::NotFound(e) => write!(f, "Path not found in tree: {}", e),
             Error::PeelError(e) => write!(f, "Error finding blob in object: {}", e),
             Error::FindObject(e) => write!(f, "Error finding object: {}", e),

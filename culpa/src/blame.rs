@@ -1,25 +1,20 @@
 use std::{ops::Range, path::Path};
 
 use gix::{
-    bstr,
     diff::blob::{diff, intern::InternedInput, Algorithm},
-    index, object,
-    revision::{
-        spec::parse::{Options, RefsHint},
-        Spec,
-    },
-    Repository,
+    index, object, ObjectId, Repository,
 };
 
 use rangemap::RangeMap;
 
 use crate::collector::{Collector, Ranges};
-use crate::error::Error;
+use crate::error;
+use crate::Result;
 
 ///  A line from the input file with blame information.
 pub struct BlamedLine<'a> {
     /// The ID of the commit to blame for this line
-    pub id: gix::ObjectId,
+    pub id: ObjectId,
 
     /// Whether or not this commit was a boundary commit
     pub boundary: bool,
@@ -39,14 +34,14 @@ pub struct BlamedLine<'a> {
 /// requested for.
 #[derive(Debug)]
 pub struct Blame {
-    ids: Vec<(bool, gix::ObjectId)>,
+    ids: Vec<(bool, ObjectId)>,
     contents: String,
 }
 
 impl Blame {
-    /// Returns a slice of [`gix::ObjectId`]s, one for each line of the blamed file. The
+    /// Returns a slice of [`ObjectId`]s, one for each line of the blamed file. The
     /// list most likely contains both consecutive and non-consecutive duplicates.
-    pub fn object_ids(&self) -> &[(bool, gix::ObjectId)] {
+    pub fn object_ids(&self) -> &[(bool, ObjectId)] {
         &self.ids
     }
 
@@ -68,7 +63,7 @@ impl Blame {
 
 #[derive(Debug)]
 struct IncompleteBlame {
-    blamed_lines: RangeMap<u32, (bool, gix::ObjectId)>,
+    blamed_lines: RangeMap<u32, (bool, ObjectId)>,
     total_range: Range<u32>,
     line_mapping: Vec<u32>,
     contents: String,
@@ -87,7 +82,7 @@ impl IncompleteBlame {
         }
     }
 
-    fn raw_assign(&mut self, lines: Range<u32>, boundary: bool, id: gix::ObjectId) {
+    fn raw_assign(&mut self, lines: Range<u32>, boundary: bool, id: ObjectId) {
         let gaps = self.blamed_lines.gaps(&lines).collect::<Vec<_>>();
 
         for r in gaps {
@@ -95,15 +90,15 @@ impl IncompleteBlame {
         }
     }
 
-    fn assign(&mut self, lines: Range<u32>, id: gix::ObjectId) {
+    fn assign(&mut self, lines: Range<u32>, id: ObjectId) {
         self.raw_assign(lines, false, id)
     }
 
-    fn assign_rest(&mut self, id: gix::ObjectId) {
+    fn assign_rest(&mut self, id: ObjectId) {
         self.raw_assign(self.total_range.clone(), true, id)
     }
 
-    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: gix::ObjectId) {
+    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: ObjectId) {
         for (_before, after) in ranges.iter().cloned() {
             let true_ranges = self.get_true_lines(after);
             for r in true_ranges {
@@ -191,19 +186,16 @@ impl IncompleteBlame {
 
 fn tree_entry(
     repo: &Repository,
-    id: impl Into<gix::ObjectId>,
+    id: impl Into<ObjectId>,
     path: impl AsRef<Path>,
-) -> Result<Option<object::tree::Entry>, Error> {
+) -> Result<Option<object::tree::Entry>> {
     repo.find_object(id)?
         .peel_to_tree()?
         .lookup_entry_by_path(path)
         .map_err(|e| e.into())
 }
 
-fn diff_tree_entries(
-    old: object::tree::Entry,
-    new: object::tree::Entry,
-) -> Result<Vec<Ranges>, Error> {
+fn diff_tree_entries(old: object::tree::Entry, new: object::tree::Entry) -> Result<Vec<Ranges>> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
@@ -215,7 +207,7 @@ fn diff_tree_entries(
     Ok(diff(Algorithm::Histogram, &input, Collector::new()))
 }
 
-fn disk_newer_than_index(stat: &index::entry::Stat, path: &std::path::Path) -> Result<bool, Error> {
+fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool> {
     let fs_stat = std::fs::symlink_metadata(path)?;
 
     Ok((stat.mtime.secs as u64)
@@ -227,7 +219,7 @@ fn disk_newer_than_index(stat: &index::entry::Stat, path: &std::path::Path) -> R
 
 /// Obtain the blame record for the given path starting from the given revision,
 /// optionally limiting it at the end.
-pub fn blame_file(repo: &gix::Repository, revision: &str, path: &Path) -> Result<Blame, Error> {
+pub fn blame_file(repo: &Repository, revision: &str, path: &Path) -> Result<Blame> {
     let range = repo.rev_parse(revision)?.detach();
 
     use gix::revision::plumbing::Spec;
@@ -235,7 +227,7 @@ pub fn blame_file(repo: &gix::Repository, revision: &str, path: &Path) -> Result
         Spec::Include(oid) => (repo.find_object(oid)?, None),
         Spec::Exclude(oid) => (repo.rev_parse_single("HEAD")?.object()?, Some(oid)),
         Spec::Range { from, to } => (repo.find_object(to)?, Some(from)),
-        _ => todo!(),
+        _ => return Err(error::Error::InvalidRange),
     };
 
     let rev_walker = repo.rev_walk(std::iter::once(start.id()));
@@ -245,7 +237,7 @@ pub fn blame_file(repo: &gix::Repository, revision: &str, path: &Path) -> Result
         .lookup_entry_by_path(path)?
         .ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))?
         .object()?
-        .peel_to_kind(gix::object::Kind::Blob)?;
+        .peel_to_kind(object::Kind::Blob)?;
 
     let contents = std::str::from_utf8(&blob.data)?.to_string();
 
@@ -264,7 +256,7 @@ pub fn blame_file(repo: &gix::Repository, revision: &str, path: &Path) -> Result
     } else {
         rev_walker.all()?
     }
-    .collect::<Result<Vec<_>, _>>()
+    .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
     for c in commits.windows(2) {
@@ -300,7 +292,7 @@ pub fn blame_file(repo: &gix::Repository, revision: &str, path: &Path) -> Result
     if blame_state.is_complete() {
         Ok(blame_state.finish())
     } else {
-        Err(Error::Generation)
+        Err(error::Error::Generation)
     }
 }
 

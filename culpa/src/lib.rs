@@ -18,3 +18,6 @@ mod error;
 pub use error::*;
 
 mod collector;
+
+/// A [`Result`](std::result::Result) alias where the `Err` case is [`error::Error`].
+pub type Result<T> = std::result::Result<T, error::Error>;
