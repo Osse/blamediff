@@ -210,11 +210,12 @@ fn diff_tree_entries(old: object::tree::Entry, new: object::tree::Entry) -> Resu
 fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool> {
     let fs_stat = std::fs::symlink_metadata(path)?;
 
-    Ok((stat.mtime.secs as u64)
-        < fs_stat
-            .modified()?
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)?
-            .as_secs())
+    let mod_secs = fs_stat
+        .modified()?
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)?
+        .as_secs();
+
+    Ok((stat.mtime.secs as u64) < mod_secs)
 }
 
 /// Obtain the blame record for the given path starting from the given revision,
