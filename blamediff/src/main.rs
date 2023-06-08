@@ -42,6 +42,11 @@ struct BlameArgs {
     path: PathBuf,
 }
 
+#[derive(Args)]
+struct TestArgs {
+    args: Vec<String>,
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -53,6 +58,7 @@ struct Cli {
 enum Command {
     Diff(DiffArgs),
     Blame(BlameArgs),
+    Test(TestArgs),
 }
 
 fn get_object(
@@ -76,6 +82,7 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Diff(da) => cmd_diff(da),
         Command::Blame(ba) => cmd_blame(ba),
+        Command::Test(ta) => cmd_test(ta),
     }
 }
 
@@ -298,6 +305,19 @@ fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
             bl.line_no + 1,
             bl.line,
         );
+    }
+
+    Ok(())
+}
+
+fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
+    let r = &gix::discover(".")?;
+    let head = r.rev_parse_single(ta.args[0].as_str())?;
+    let rev_walker = r.rev_walk(std::iter::once(head));
+    let rev_walker = rev_walker.sorting(gix::traverse::commit::Sorting::ByCommitTimeNewestFirst);
+    for c in rev_walker.all()? {
+        let cc = c?;
+        println!("{}", cc.to_string());
     }
 
     Ok(())
