@@ -7,6 +7,7 @@ pub enum Error {
     FindObject(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
     SystemTime(std::time::SystemTimeError),
     ParseSingle(gix::revision::spec::parse::single::Error),
+    Parse(gix::revision::spec::parse::Error),
     StrUtf8Error(std::str::Utf8Error),
     WalkError(gix::revision::walk::Error),
 }
@@ -18,7 +19,8 @@ impl std::fmt::Display for Error {
             Error::NotFound(e) => write!(f, "Path not found in tree: {}", e),
             Error::PeelError(e) => write!(f, "Error finding blob in object: {}", e),
             Error::FindObject(e) => write!(f, "Error finding object: {}", e),
-            Error::ParseSingle(e) => write!(f, "Error parsing revision: {}", e),
+            Error::ParseSingle(e) => write!(f, "Error parsing single revision: {}", e),
+            Error::Parse(e) => write!(f, "Error parsing revision: {}", e),
             Error::StrUtf8Error(e) => write!(f, "Error converting data to string: {}", e),
             Error::WalkError(e) => write!(f, "Error walking the history: {}", e),
             Error::SystemTime(e) => write!(f, "Error finding timestamp: {}", e),
@@ -39,6 +41,7 @@ macro_rules! make_error {
 }
 make_error![std::time::SystemTimeError, SystemTime];
 make_error![gix::revision::spec::parse::single::Error, ParseSingle];
+make_error![gix::revision::spec::parse::Error, Parse];
 make_error![
     gix::odb::find::existing::Error<gix::odb::store::find::Error>,
     FindObject
