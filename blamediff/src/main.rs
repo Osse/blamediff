@@ -283,7 +283,7 @@ fn diff_two_blobs(
 
 fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
     let repo = gix::discover(".")?;
-    let b = culpa::blame_file(&repo, &ba.revision, &ba.path)?;
+    let b = culpa::blame_file(&repo, &ba.revision, false, &ba.path)?;
     let format = format_description!(
         "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]"
     );

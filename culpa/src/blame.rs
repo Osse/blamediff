@@ -220,7 +220,12 @@ fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool>
 
 /// Obtain the blame record for the given path starting from the given revision,
 /// optionally limiting it at the end.
-pub fn blame_file(repo: &Repository, revision: &str, path: &Path) -> Result<Blame> {
+pub fn blame_file(
+    repo: &Repository,
+    revision: &str,
+    first_parent: bool,
+    path: &Path,
+) -> Result<Blame> {
     let range = repo.rev_parse(revision)?.detach();
 
     use gix::revision::plumbing::Spec;
@@ -231,7 +236,17 @@ pub fn blame_file(repo: &Repository, revision: &str, path: &Path) -> Result<Blam
         _ => return Err(error::Error::InvalidRange),
     };
 
-    let rev_walker = repo.rev_walk(std::iter::once(start.id()));
+    let rev_walker = {
+        let r = repo
+            .rev_walk(std::iter::once(start.id()))
+            .sorting(gix::traverse::commit::Sorting::ByCommitTimeNewestFirst);
+
+        if first_parent {
+            r.first_parent_only()
+        } else {
+            r
+        }
+    };
 
     let blob = start
         .peel_to_tree()?
