@@ -272,12 +272,17 @@ pub fn blame_file(
     } else {
         rev_walker.all()?
     }
+    .map(|id| id.and_then(|id| id.object().and_then(|o| o.into_commit())))
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
     for c in commits.windows(2) {
         let commit = c[0];
         let prev_commit = c[1];
+
+        if commit.object()?.into_commit().parent_ids().count() > 1 {
+            // Handle merge commits here
+        }
 
         let entry = tree_entry(repo, commit, path)?;
         let prev_entry = tree_entry(repo, prev_commit, path)?;
