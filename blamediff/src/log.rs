@@ -17,7 +17,7 @@ pub fn log(paths: &[std::path::PathBuf]) {
         .peekable();
 
     while let Some(c_id) = iter.next() {
-        let c_id = c_id.unwrap();
+        let c_id = c_id.unwrap().id;
 
         let c = repo
             .find_object(c_id)
@@ -33,7 +33,7 @@ pub fn log(paths: &[std::path::PathBuf]) {
                 let aa = aa.as_ref().unwrap();
 
                 let cc = repo
-                    .find_object(*aa)
+                    .find_object(aa.id)
                     .unwrap()
                     .peel_to_kind(object::Kind::Commit)
                     .unwrap()

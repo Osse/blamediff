@@ -272,17 +272,12 @@ pub fn blame_file(
     } else {
         rev_walker.all()?
     }
-    .map(|id| id.and_then(|id| id.object().and_then(|o| o.into_commit())))
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
     for c in commits.windows(2) {
-        let commit = c[0];
-        let prev_commit = c[1];
-
-        if commit.object()?.into_commit().parent_ids().count() > 1 {
-            // Handle merge commits here
-        }
+        let commit = c[0].id;
+        let prev_commit = c[1].id;
 
         let entry = tree_entry(repo, commit, path)?;
         let prev_entry = tree_entry(repo, prev_commit, path)?;
@@ -290,7 +285,7 @@ pub fn blame_file(
         match (entry, prev_entry) {
             (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
                 let ranges = diff_tree_entries(p_e, e)?;
-                blame_state.process(ranges, commit.detach())
+                blame_state.process(ranges, commit)
             }
             (Some(_e), Some(_p_e)) => {
                 // The two files are identical
@@ -299,7 +294,7 @@ pub fn blame_file(
             (Some(_e), None) => {
                 // File doesn't exist in previous commit
                 // Attribute remaining lines to this commit
-                blame_state.assign_rest(commit.detach());
+                blame_state.assign_rest(commit);
                 break;
             }
             (None, _) => unreachable!("File doesn't exist in current commit"),
@@ -308,7 +303,7 @@ pub fn blame_file(
 
     // Whatever's left assign it to the last (or only) commit. In case we hit the
     // "break" above there is no rest to assign so this does nothing.
-    blame_state.assign_rest(commits.last().expect("at least one commit").detach());
+    blame_state.assign_rest(commits.last().expect("at least one commit").id);
 
     if blame_state.is_complete() {
         Ok(blame_state.finish())
