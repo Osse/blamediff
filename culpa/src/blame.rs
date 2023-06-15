@@ -95,6 +95,19 @@ impl IncompleteBlame {
     }
 
     fn assign_rest(&mut self, id: ObjectId) {
+        // First remove anything that has already been assigned to this id
+        // because it would have been assigned with boundary = false
+        let r = self
+            .blamed_lines
+            .iter()
+            .filter(|(_, &(_, idd))| idd == id)
+            .map(|(r, _)| r.clone())
+            .collect::<Vec<_>>();
+
+        for r in r {
+            self.blamed_lines.remove(r);
+        }
+
         self.raw_assign(self.total_range.clone(), true, id)
     }
 
@@ -275,33 +288,38 @@ pub fn blame_file(
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
-    for c in commits.windows(2) {
-        let commit = c[0].id;
-        let prev_commit = c[1].id;
+    for commit_info in &commits {
+        let commit = commit_info.id;
 
-        let entry = tree_entry(repo, commit, path)?;
-        let prev_entry = tree_entry(repo, prev_commit, path)?;
+        if let Some(prev_commit) = commit_info.parent_ids().next() {
+            let entry = tree_entry(repo, commit, path)?;
+            let prev_entry = tree_entry(repo, prev_commit, path)?;
 
-        match (entry, prev_entry) {
-            (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                let ranges = diff_tree_entries(p_e, e)?;
-                blame_state.process(ranges, commit)
-            }
-            (Some(_e), Some(_p_e)) => {
-                // The two files are identical
-                continue;
-            }
-            (Some(_e), None) => {
-                // File doesn't exist in previous commit
-                // Attribute remaining lines to this commit
-                blame_state.assign_rest(commit);
-                break;
-            }
-            (None, _) => unreachable!("File doesn't exist in current commit"),
-        };
+            match (entry, prev_entry) {
+                (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
+                    let ranges = diff_tree_entries(p_e, e)?;
+                    blame_state.process(ranges, commit)
+                }
+                (Some(_e), Some(_p_e)) => {
+                    // The two files are identical
+                    continue;
+                }
+                (Some(_e), None) => {
+                    // File doesn't exist in previous commit
+                    // Attribute remaining lines to this commit
+                    blame_state.assign_rest(commit);
+                    break;
+                }
+                (None, _) => unreachable!("File doesn't exist in current commit"),
+            };
+        } else {
+            // whatever's left assign it to this last (or only) commit. in case we hit the
+            // "break" above there is no rest to assign so this does nothing.
+            blame_state.assign_rest(commit);
+        }
     }
 
-    // Whatever's left assign it to the last (or only) commit. In case we hit the
+    // whatever's left assign it to the last (or only) commit. in case we hit the
     // "break" above there is no rest to assign so this does nothing.
     blame_state.assign_rest(commits.last().expect("at least one commit").id);
 
