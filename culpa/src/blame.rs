@@ -231,6 +231,8 @@ fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool>
     Ok((stat.mtime.secs as u64) < mod_secs)
 }
 
+fn assign_blame(ib: &mut IncompleteBlame, old: gix::ObjectId, new: gix::ObjectId) {}
+
 /// Obtain the blame record for the given path starting from the given revision,
 /// optionally limiting it at the end.
 pub fn blame_file(
@@ -289,33 +291,33 @@ pub fn blame_file(
     .expect("Able to collect all history");
 
     for commit_info in &commits {
-        let commit = commit_info.id;
-
-        if let Some(prev_commit) = commit_info.parent_ids().next() {
-            let entry = tree_entry(repo, commit, path)?;
-            let prev_entry = tree_entry(repo, prev_commit, path)?;
-
-            match (entry, prev_entry) {
-                (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                    let ranges = diff_tree_entries(p_e, e)?;
-                    blame_state.process(ranges, commit)
-                }
-                (Some(_e), Some(_p_e)) => {
-                    // The two files are identical
-                    continue;
-                }
-                (Some(_e), None) => {
-                    // File doesn't exist in previous commit
-                    // Attribute remaining lines to this commit
-                    blame_state.assign_rest(commit);
-                    break;
-                }
-                (None, _) => unreachable!("File doesn't exist in current commit"),
-            };
+        if commit_info.parent_ids.is_empty() {
+            blame_state.assign_rest(commit_info.id);
         } else {
-            // whatever's left assign it to this last (or only) commit. in case we hit the
-            // "break" above there is no rest to assign so this does nothing.
-            blame_state.assign_rest(commit);
+            let commit = commit_info.id;
+            let entry = tree_entry(repo, commit, path)?;
+
+            for prev_commit in &commit_info.parent_ids {
+                let prev_entry = tree_entry(repo, *prev_commit, path)?;
+
+                match (&entry, prev_entry) {
+                    (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
+                        let ranges = diff_tree_entries(p_e, e.to_owned())?;
+                        blame_state.process(ranges, commit)
+                    }
+                    (Some(_e), Some(_p_e)) => {
+                        // The two files are identical
+                        continue;
+                    }
+                    (Some(_e), None) => {
+                        // File doesn't exist in previous commit
+                        // Attribute remaining lines to this commit
+                        blame_state.assign_rest(commit);
+                        break;
+                    }
+                    (None, _) => unreachable!("File doesn't exist in current commit"),
+                };
+            }
         }
     }
 
