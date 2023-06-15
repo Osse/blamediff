@@ -1,4 +1,4 @@
-use std::{ops::Range, path::Path};
+use std::{collections::HashMap, ops::Range, path::Path};
 
 use gix::{
     diff::blob::{diff, intern::InternedInput, Algorithm},
@@ -7,7 +7,7 @@ use gix::{
 
 use rangemap::RangeMap;
 
-use crate::collector::{Collector, Ranges};
+use crate::collectors::{OnlyRanges, Ranges, RangesAndLines};
 use crate::error;
 use crate::Result;
 
@@ -217,7 +217,26 @@ fn diff_tree_entries(old: object::tree::Entry, new: object::tree::Entry) -> Resu
 
     let input = InternedInput::new(old_file, new_file);
 
-    Ok(diff(Algorithm::Histogram, &input, Collector::new()))
+    Ok(diff(Algorithm::Histogram, &input, OnlyRanges::new()))
+}
+
+fn diff_tree_entries2(
+    old: object::tree::Entry,
+    new: object::tree::Entry,
+) -> Result<(Vec<Ranges>, HashMap<u32, String>, HashMap<u32, String>)> {
+    let old = &old.object()?.data;
+    let new = &new.object()?.data;
+
+    let old_file = std::str::from_utf8(old)?;
+    let new_file = std::str::from_utf8(new)?;
+
+    let input = InternedInput::new(old_file, new_file);
+
+    Ok(diff(
+        Algorithm::Histogram,
+        &input,
+        RangesAndLines::new(&input),
+    ))
 }
 
 fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool> {
@@ -291,13 +310,16 @@ pub fn blame_file(
     .expect("Able to collect all history");
 
     for commit_info in &commits {
-        if commit_info.parent_ids.is_empty() {
-            blame_state.assign_rest(commit_info.id);
-        } else {
-            let commit = commit_info.id;
-            let entry = tree_entry(repo, commit, path)?;
+        let commit = commit_info.id;
+        let entry = tree_entry(repo, commit, path)?;
 
-            for prev_commit in &commit_info.parent_ids {
+        match commit_info.parent_ids.len() {
+            0 => {
+                // Root commit (or end of range). Treat as boundary
+                blame_state.assign_rest(commit_info.id);
+            }
+            1 => {
+                let prev_commit = commit_info.parent_ids.first().unwrap();
                 let prev_entry = tree_entry(repo, *prev_commit, path)?;
 
                 match (&entry, prev_entry) {
@@ -317,6 +339,33 @@ pub fn blame_file(
                     }
                     (None, _) => unreachable!("File doesn't exist in current commit"),
                 };
+            }
+            n => {
+                // This is a merge commit with n parents where n > 1
+                let mut merge_ranges = Vec::with_capacity(n);
+
+                for prev_commit in &commit_info.parent_ids {
+                    let prev_entry = tree_entry(repo, *prev_commit, path)?;
+
+                    match (&entry, prev_entry) {
+                        (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
+                            let ranges = diff_tree_entries2(p_e, e.to_owned())?;
+                            merge_ranges.push(ranges);
+                        }
+                        (Some(_e), Some(_p_e)) => {
+                            // The two files are identical
+                            merge_ranges.push((vec![], HashMap::new(), HashMap::new()));
+                        }
+                        (Some(_e), None) => {
+                            // File doesn't exist in previous commit
+                            // Attribute remaining lines to this commit
+                        }
+                        (None, _) => unreachable!("File doesn't exist in current commit"),
+                    };
+                }
+
+                dbg!(merge_ranges);
+                return Err(error::Error::Generation);
             }
         }
     }

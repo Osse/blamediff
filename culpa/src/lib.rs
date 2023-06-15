@@ -17,7 +17,7 @@ pub use blame::*;
 mod error;
 pub use error::*;
 
-mod collector;
+mod collectors;
 
 /// A [`Result`](std::result::Result) alias where the `Err` case is [`error::Error`].
 pub type Result<T> = std::result::Result<T, error::Error>;
