@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range, path::Path};
+use std::{collections::HashMap, hash::Hash, ops::Range, path::Path};
 
 use gix::{
     diff::blob::{diff, intern::InternedInput, Algorithm},
@@ -7,8 +7,8 @@ use gix::{
 
 use rangemap::RangeMap;
 
-use crate::collectors::{OnlyRanges, Ranges, RangesAndLines};
 use crate::error;
+use crate::sinks::{MappedRangeCollector, RangeAndLineCollector, Ranges};
 use crate::Result;
 
 ///  A line from the input file with blame information.
@@ -65,19 +65,22 @@ impl Blame {
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, ObjectId)>,
     total_range: Range<u32>,
-    line_mapping: Vec<u32>,
+    line_mappings: HashMap<ObjectId, Vec<u32>>,
     contents: String,
 }
 
 impl IncompleteBlame {
-    fn new(contents: String) -> Self {
+    fn new(contents: String, id: gix::ObjectId) -> Self {
         let lines = contents.lines().count();
         let total_range = 0..lines as u32;
 
+        let mut line_mappings = HashMap::new();
+        line_mappings.insert(id, Vec::from_iter(total_range.clone()));
+
         Self {
             blamed_lines: RangeMap::new(),
-            total_range: total_range.clone(),
-            line_mapping: Vec::from_iter(total_range),
+            total_range: total_range,
+            line_mappings,
             contents,
         }
     }
@@ -94,7 +97,7 @@ impl IncompleteBlame {
         self.raw_assign(lines, false, id)
     }
 
-    fn assign_rest(&mut self, id: ObjectId) {
+    fn assign_as_boundary(&mut self, id: ObjectId) {
         // First remove anything that has already been assigned to this id
         // because it would have been assigned with boundary = false
         let r = self
@@ -111,47 +114,25 @@ impl IncompleteBlame {
         self.raw_assign(self.total_range.clone(), true, id)
     }
 
-    fn process(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>, id: ObjectId) {
+    fn process(&mut self, ranges: &[(Range<u32>, Range<u32>)], id: ObjectId) {
         for (_before, after) in ranges.iter().cloned() {
-            let true_ranges = self.get_true_lines(after);
+            let true_ranges = self.get_true_lines(after, id);
             for r in true_ranges {
                 self.assign(r, id);
             }
         }
-
-        self.update_mapping(ranges);
     }
 
     fn is_complete(&self) -> bool {
         self.blamed_lines.gaps(&self.total_range).count() == 0
     }
 
-    fn update_mapping(&mut self, ranges: Vec<(Range<u32>, Range<u32>)>) {
-        for (before, after) in ranges {
-            let alen = after.len();
-            let blen = before.len();
-            let pos = self.line_mapping.partition_point(|v| *v < after.end);
-
-            if alen > blen {
-                let offset = alen - blen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v -= offset as u32;
-                }
-            } else if blen > alen {
-                let offset = blen - alen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v += offset as u32;
-                }
-            }
-        }
-    }
-
-    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
+    fn get_true_lines(&self, fake_lines: Range<u32>, id: ObjectId) -> Vec<Range<u32>> {
         let mut true_lines = vec![];
+
+        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
         for fake_line in fake_lines {
-            for (true_line, mapped_line) in self.line_mapping.iter().enumerate() {
+            for (true_line, mapped_line) in line_mapping.iter().enumerate() {
                 if *mapped_line == fake_line {
                     true_lines.push(true_line as u32);
                 }
@@ -208,22 +189,11 @@ fn tree_entry(
         .map_err(|e| e.into())
 }
 
-fn diff_tree_entries(old: object::tree::Entry, new: object::tree::Entry) -> Result<Vec<Ranges>> {
-    let old = &old.object()?.data;
-    let new = &new.object()?.data;
-
-    let old_file = std::str::from_utf8(old)?;
-    let new_file = std::str::from_utf8(new)?;
-
-    let input = InternedInput::new(old_file, new_file);
-
-    Ok(diff(Algorithm::Histogram, &input, OnlyRanges::new()))
-}
-
-fn diff_tree_entries2(
+fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-) -> Result<(Vec<Ranges>, HashMap<u32, String>, HashMap<u32, String>)> {
+    line_mapping: Vec<u32>,
+) -> Result<(Vec<Ranges>, Vec<u32>)> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
@@ -235,7 +205,32 @@ fn diff_tree_entries2(
     Ok(diff(
         Algorithm::Histogram,
         &input,
-        RangesAndLines::new(&input),
+        MappedRangeCollector::new(line_mapping),
+    ))
+}
+
+fn diff_tree_entries2(
+    old: object::tree::Entry,
+    new: object::tree::Entry,
+    line_mapping: Vec<u32>,
+) -> Result<(
+    Vec<Ranges>,
+    HashMap<u32, String>,
+    HashMap<u32, String>,
+    Vec<u32>,
+)> {
+    let old = &old.object()?.data;
+    let new = &new.object()?.data;
+
+    let old_file = std::str::from_utf8(old)?;
+    let new_file = std::str::from_utf8(new)?;
+
+    let input = InternedInput::new(old_file, new_file);
+
+    Ok(diff(
+        Algorithm::Histogram,
+        &input,
+        RangeAndLineCollector::new(&input, line_mapping),
     ))
 }
 
@@ -282,6 +277,7 @@ pub fn blame_file(
         }
     };
 
+    let start_id = start.id;
     let blob = start
         .peel_to_tree()?
         .lookup_entry_by_path(path)?
@@ -291,7 +287,7 @@ pub fn blame_file(
 
     let contents = std::str::from_utf8(&blob.data)?.to_string();
 
-    let mut blame_state = IncompleteBlame::new(contents);
+    let mut blame_state = IncompleteBlame::new(contents, start_id);
 
     let commits = if let Some(end) = end {
         rev_walker.selected(move |o| end.as_ref() != o)?
@@ -305,19 +301,23 @@ pub fn blame_file(
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
 
+        let line_mapping = blame_state.line_mappings.get(&commit).unwrap();
+
         match commit_info.parent_ids.len() {
             0 => {
                 // Root commit (or end of range). Treat as boundary
-                blame_state.assign_rest(commit_info.id);
+                blame_state.assign_as_boundary(commit_info.id);
             }
             1 => {
-                let prev_commit = commit_info.parent_ids.first().unwrap();
-                let prev_entry = tree_entry(repo, *prev_commit, path)?;
+                let prev_commit = commit_info.parent_ids[0];
+                let prev_entry = tree_entry(repo, prev_commit, path)?;
 
                 match (&entry, prev_entry) {
                     (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                        let ranges = diff_tree_entries(p_e, e.to_owned())?;
-                        blame_state.process(ranges, commit)
+                        let (ranges, line_mapping) =
+                            diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
+                        blame_state.process(&ranges, commit);
+                        blame_state.line_mappings.insert(prev_commit, line_mapping);
                     }
                     (Some(_e), Some(_p_e)) => {
                         // The two files are identical
@@ -326,7 +326,7 @@ pub fn blame_file(
                     (Some(_e), None) => {
                         // File doesn't exist in previous commit
                         // Attribute remaining lines to this commit
-                        blame_state.assign_rest(commit);
+                        blame_state.assign_as_boundary(commit);
                         break;
                     }
                     (None, _) => unreachable!("File doesn't exist in current commit"),
@@ -341,12 +341,18 @@ pub fn blame_file(
 
                     match (&entry, prev_entry) {
                         (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                            let ranges = diff_tree_entries2(p_e, e.to_owned())?;
+                            let ranges =
+                                diff_tree_entries2(p_e, e.to_owned(), line_mapping.clone())?;
                             merge_ranges.push(ranges);
                         }
                         (Some(_e), Some(_p_e)) => {
                             // The two files are identical
-                            merge_ranges.push((vec![], HashMap::new(), HashMap::new()));
+                            merge_ranges.push((
+                                vec![],
+                                HashMap::new(),
+                                HashMap::new(),
+                                line_mapping.clone(),
+                            ));
                         }
                         (Some(_e), None) => {
                             // File doesn't exist in previous commit
@@ -366,9 +372,9 @@ pub fn blame_file(
     // explicit endpoint, assign to that. If we hit the "break" above there is
     // no rest to assign so this does nothing.
     if let Some(end) = end {
-        blame_state.assign_rest(end);
+        blame_state.assign_as_boundary(end);
     } else {
-        blame_state.assign_rest(commits.last().expect("At least one commit").id);
+        blame_state.assign_as_boundary(commits.last().expect("At least one commit").id);
     }
 
     if blame_state.is_complete() {
