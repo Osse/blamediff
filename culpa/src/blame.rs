@@ -293,16 +293,8 @@ pub fn blame_file(
 
     let mut blame_state = IncompleteBlame::new(contents);
 
-    let mut stop = false;
     let commits = if let Some(end) = end {
-        rev_walker.selected(move |o| {
-            if stop {
-                return false;
-            } else if end.as_ref() == o {
-                stop = true;
-            }
-            true
-        })?
+        rev_walker.selected(move |o| end.as_ref() != o)?
     } else {
         rev_walker.all()?
     }
@@ -370,9 +362,14 @@ pub fn blame_file(
         }
     }
 
-    // whatever's left assign it to the last (or only) commit. in case we hit the
-    // "break" above there is no rest to assign so this does nothing.
-    blame_state.assign_rest(commits.last().expect("at least one commit").id);
+    // Whatever's left assign it to the last (or only) commit. In the case of an
+    // explicit endpoint, assign to that. If we hit the "break" above there is
+    // no rest to assign so this does nothing.
+    if let Some(end) = end {
+        blame_state.assign_rest(end);
+    } else {
+        blame_state.assign_rest(commits.last().expect("At least one commit").id);
+    }
 
     if blame_state.is_complete() {
         Ok(blame_state.finish())
