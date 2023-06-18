@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, ops::Range, path::Path};
+use std::{collections::HashMap, ops::Range, path::Path};
 
 use gix::{
     diff::blob::{diff, intern::InternedInput, Algorithm},
@@ -8,7 +8,7 @@ use gix::{
 use rangemap::RangeMap;
 
 use crate::error;
-use crate::sinks::{MappedRangeCollector, RangeAndLineCollector, Ranges};
+use crate::sinks::{Changes, MappedRangeCollector, RangeAndLineCollector, Ranges};
 use crate::Result;
 
 ///  A line from the input file with blame information.
@@ -213,12 +213,7 @@ fn diff_tree_entries2(
     old: object::tree::Entry,
     new: object::tree::Entry,
     line_mapping: Vec<u32>,
-) -> Result<(
-    Vec<Ranges>,
-    HashMap<u32, String>,
-    HashMap<u32, String>,
-    Vec<u32>,
-)> {
+) -> Result<Changes> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
@@ -297,11 +292,13 @@ pub fn blame_file(
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
+    dbg!(&commits);
+
     for commit_info in &commits {
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
 
-        let line_mapping = blame_state.line_mappings.get(&commit).unwrap();
+        let line_mapping = blame_state.line_mappings.get(&commit).unwrap().clone();
 
         match commit_info.parent_ids.len() {
             0 => {
@@ -334,25 +331,26 @@ pub fn blame_file(
             }
             n => {
                 // This is a merge commit with n parents where n > 1
-                let mut merge_ranges = Vec::with_capacity(n);
+                // Collect all results *and content*
+                let mut merge_changes = Vec::with_capacity(n);
 
                 for prev_commit in &commit_info.parent_ids {
                     let prev_entry = tree_entry(repo, *prev_commit, path)?;
 
                     match (&entry, prev_entry) {
                         (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                            let ranges =
+                            let changes =
                                 diff_tree_entries2(p_e, e.to_owned(), line_mapping.clone())?;
-                            merge_ranges.push(ranges);
+
+                            blame_state
+                                .line_mappings
+                                .insert(*prev_commit, changes.line_mapping.clone());
+
+                            merge_changes.push(changes);
                         }
                         (Some(_e), Some(_p_e)) => {
                             // The two files are identical
-                            merge_ranges.push((
-                                vec![],
-                                HashMap::new(),
-                                HashMap::new(),
-                                line_mapping.clone(),
-                            ));
+                            merge_changes.push((Changes::default()));
                         }
                         (Some(_e), None) => {
                             // File doesn't exist in previous commit
@@ -361,9 +359,6 @@ pub fn blame_file(
                         (None, _) => unreachable!("File doesn't exist in current commit"),
                     };
                 }
-
-                dbg!(merge_ranges);
-                return Err(error::Error::Generation);
             }
         }
     }
