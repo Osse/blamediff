@@ -61,6 +61,52 @@ impl Blame {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum Origin {
+    Definitely(ObjectId),
+    AncestorOf(ObjectId),
+}
+
+impl Origin {
+    fn id(&self) -> ObjectId {
+        match self {
+            Self::Definitely(id) => *id,
+            Self::AncestorOf(id) => *id,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct Line {
+    boundary: bool,
+    origin: Origin,
+}
+
+fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
+    let mut ranges = Vec::with_capacity(slice.len());
+
+    // TODO: When group_by becomes stable
+    while !slice.is_empty() {
+        let mut head_len = 1;
+        let mut iter = slice.windows(2);
+
+        while let Some([l, r]) = iter.next() {
+            if *l + 1 == *r {
+                head_len += 1;
+            } else {
+                break;
+            }
+        }
+
+        let (head, tail) = slice.split_at(head_len);
+        slice = tail;
+
+        ranges.push(*head.first().unwrap()..*head.last().unwrap() + 1);
+    }
+
+    ranges
+}
+
 #[derive(Debug)]
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, ObjectId)>,
@@ -139,27 +185,7 @@ impl IncompleteBlame {
             }
         }
 
-        let mut slice: &[u32] = &true_lines;
-        let mut ranges = vec![];
-
-        // TODO: When group_by becomes stable
-        while !slice.is_empty() {
-            let mut head_len = 1;
-            let mut iter = slice.windows(2);
-
-            while let Some([l, r]) = iter.next() {
-                if *l + 1 == *r {
-                    head_len += 1;
-                } else {
-                    break;
-                }
-            }
-
-            let (head, tail) = slice.split_at(head_len);
-            slice = tail;
-
-            ranges.push(*head.first().unwrap()..*head.last().unwrap() + 1);
-        }
+        let ranges = make_ranges(&true_lines);
 
         ranges
     }
