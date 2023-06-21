@@ -9,29 +9,6 @@ pub struct BeforeAfter {
     pub after: Range<u32>,
 }
 
-/// Just collects the ranges given to it.
-pub struct RangeCollector {
-    ranges: Vec<BeforeAfter>,
-}
-
-impl RangeCollector {
-    pub fn new() -> Self {
-        Self { ranges: vec![] }
-    }
-}
-
-impl Sink for RangeCollector {
-    type Out = Vec<BeforeAfter>;
-
-    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push(BeforeAfter { before, after });
-    }
-
-    fn finish(self) -> Self::Out {
-        self.ranges
-    }
-}
-
 /// Collects the ranges given to it and the old and new line contents for the
 /// collected lines.
 pub struct RangeAndLineCollector<'a, T>
@@ -126,54 +103,5 @@ where
             new_lines: self.new_lines,
             line_mapping: self.line_mapping,
         }
-    }
-}
-
-pub struct MappedRangeCollector {
-    ranges: Vec<BeforeAfter>,
-    line_mapping: LineMapping,
-}
-
-impl MappedRangeCollector {
-    pub fn new(line_mapping: LineMapping) -> Self {
-        Self {
-            ranges: vec![],
-            line_mapping,
-        }
-    }
-
-    fn update_mapping(&mut self) {
-        for BeforeAfter { before, after } in &self.ranges {
-            let alen = after.len();
-            let blen = before.len();
-            let pos = self.line_mapping.partition_point(|v| *v < after.end);
-
-            if alen > blen {
-                let offset = alen - blen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v -= offset as u32;
-                }
-            } else if blen > alen {
-                let offset = blen - alen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v += offset as u32;
-                }
-            }
-        }
-    }
-}
-
-impl Sink for MappedRangeCollector {
-    type Out = (Vec<BeforeAfter>, LineMapping);
-
-    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push(BeforeAfter { before, after });
-    }
-
-    fn finish(mut self) -> Self::Out {
-        self.update_mapping();
-        (self.ranges, self.line_mapping)
     }
 }

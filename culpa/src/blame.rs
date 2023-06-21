@@ -12,7 +12,7 @@ use gix::{
 use rangemap::RangeMap;
 
 use crate::error;
-use crate::sinks::{BeforeAfter, Changes, MappedRangeCollector, RangeAndLineCollector};
+use crate::sinks::{BeforeAfter, Changes, RangeAndLineCollector};
 use crate::Result;
 
 ///  A line from the input file with blame information.
@@ -266,26 +266,6 @@ fn tree_entry(
 }
 
 fn diff_tree_entries(
-    old: object::tree::Entry,
-    new: object::tree::Entry,
-    line_mapping: LineMapping,
-) -> Result<(Vec<BeforeAfter>, LineMapping)> {
-    let old = &old.object()?.data;
-    let new = &new.object()?.data;
-
-    let old_file = std::str::from_utf8(old)?;
-    let new_file = std::str::from_utf8(new)?;
-
-    let input = InternedInput::new(old_file, new_file);
-
-    Ok(diff(
-        Algorithm::Histogram,
-        &input,
-        MappedRangeCollector::new(line_mapping),
-    ))
-}
-
-fn diff_tree_entries2(
     old: object::tree::Entry,
     new: object::tree::Entry,
     line_mapping: LineMapping,
