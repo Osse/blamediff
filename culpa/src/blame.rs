@@ -1,4 +1,8 @@
-use std::{collections::HashMap, ops::Range, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+    path::Path,
+};
 
 use gix::{
     diff::blob::{diff, intern::InternedInput, Algorithm},
@@ -107,11 +111,73 @@ fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
     ranges
 }
 
+/// A LineMapping is map from actual line number in the blamed file to the line
+/// number in a previous version.
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct LineMapping(Vec<u32>);
+
+impl LineMapping {
+    pub fn from_vec(v: Vec<u32>) -> Self {
+        Self(v)
+    }
+
+    pub fn from_range(r: Range<u32>) -> Self {
+        Self(Vec::from_iter(r))
+    }
+
+    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
+        let mut true_lines = vec![];
+
+        for fake_line in fake_lines {
+            for (true_line, mapped_line) in self.0.iter().enumerate() {
+                if *mapped_line == fake_line {
+                    true_lines.push(true_line as u32);
+                }
+            }
+        }
+
+        let ranges = make_ranges(&true_lines);
+
+        ranges
+    }
+}
+
+impl std::ops::Deref for LineMapping {
+    type Target = [u32];
+
+    fn deref(&self) -> &[u32] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for LineMapping {
+    fn deref_mut(&mut self) -> &mut [u32] {
+        &mut self.0
+    }
+}
+
+impl std::fmt::Debug for LineMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let m: BTreeMap<usize, u32> =
+            BTreeMap::from_iter(self.0.iter().enumerate().filter_map(|(i, e)| {
+                if i as u32 != *e {
+                    Some((i, *e))
+                } else {
+                    None
+                }
+            }));
+        f.debug_struct("LineMapping")
+            .field("length", &self.0.len())
+            .field("map", &m)
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, ObjectId)>,
     total_range: Range<u32>,
-    line_mappings: HashMap<ObjectId, Vec<u32>>,
+    line_mappings: HashMap<ObjectId, LineMapping>,
     contents: String,
 }
 
@@ -121,7 +187,7 @@ impl IncompleteBlame {
         let total_range = 0..lines as u32;
 
         let mut line_mappings = HashMap::new();
-        line_mappings.insert(id, Vec::from_iter(total_range.clone()));
+        line_mappings.insert(id, LineMapping::from_range(total_range.clone()));
 
         Self {
             blamed_lines: RangeMap::new(),
@@ -162,7 +228,8 @@ impl IncompleteBlame {
 
     fn process(&mut self, ranges: &[(Range<u32>, Range<u32>)], id: ObjectId) {
         for (_before, after) in ranges.iter().cloned() {
-            let true_ranges = self.get_true_lines(after, id);
+            let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
+            let true_ranges = line_mapping.get_true_lines(after);
             for r in true_ranges {
                 self.assign(r, id);
             }
@@ -171,23 +238,6 @@ impl IncompleteBlame {
 
     fn is_complete(&self) -> bool {
         self.blamed_lines.gaps(&self.total_range).count() == 0
-    }
-
-    fn get_true_lines(&self, fake_lines: Range<u32>, id: ObjectId) -> Vec<Range<u32>> {
-        let mut true_lines = vec![];
-
-        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
-        for fake_line in fake_lines {
-            for (true_line, mapped_line) in line_mapping.iter().enumerate() {
-                if *mapped_line == fake_line {
-                    true_lines.push(true_line as u32);
-                }
-            }
-        }
-
-        let ranges = make_ranges(&true_lines);
-
-        ranges
     }
 
     fn finish(self) -> Blame {
@@ -218,8 +268,8 @@ fn tree_entry(
 fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-    line_mapping: Vec<u32>,
-) -> Result<(Vec<Ranges>, Vec<u32>)> {
+    line_mapping: LineMapping,
+) -> Result<(Vec<Ranges>, LineMapping)> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
@@ -238,7 +288,7 @@ fn diff_tree_entries(
 fn diff_tree_entries2(
     old: object::tree::Entry,
     new: object::tree::Entry,
-    line_mapping: Vec<u32>,
+    line_mapping: LineMapping,
 ) -> Result<Changes> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;

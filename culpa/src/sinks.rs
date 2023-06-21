@@ -25,6 +25,7 @@ impl Sink for RangeCollector {
         self.ranges
     }
 }
+use crate::blame::LineMapping;
 
 /// Collects the ranges given to it and the old and new line contents for the
 /// collected lines.
@@ -36,7 +37,7 @@ where
     old_lines: HashMap<u32, String>,
     new_lines: HashMap<u32, String>,
 
-    line_mapping: Vec<u32>,
+    line_mapping: LineMapping,
 
     interner: &'a InternedInput<T>,
 }
@@ -45,7 +46,7 @@ impl<'a, T> RangeAndLineCollector<'a, T>
 where
     T: std::hash::Hash + std::cmp::Eq + std::fmt::Display + ToString,
 {
-    pub fn new(interner: &'a InternedInput<T>, line_mapping: Vec<u32>) -> Self {
+    pub fn new(interner: &'a InternedInput<T>, line_mapping: LineMapping) -> Self {
         Self {
             ranges: vec![],
             old_lines: HashMap::new(),
@@ -83,7 +84,7 @@ pub struct Changes {
     pub ranges: Vec<Ranges>,
     pub old_lines: HashMap<u32, String>,
     pub new_lines: HashMap<u32, String>,
-    pub line_mapping: Vec<u32>,
+    pub line_mapping: LineMapping,
 }
 
 impl<'a, T> Sink for RangeAndLineCollector<'a, T>
@@ -122,11 +123,11 @@ where
 
 pub struct MappedRangeCollector {
     ranges: Vec<Ranges>,
-    line_mapping: Vec<u32>,
+    line_mapping: LineMapping,
 }
 
 impl MappedRangeCollector {
-    pub fn new(line_mapping: Vec<u32>) -> Self {
+    pub fn new(line_mapping: LineMapping) -> Self {
         Self {
             ranges: vec![],
             line_mapping,
@@ -157,7 +158,7 @@ impl MappedRangeCollector {
 }
 
 impl Sink for MappedRangeCollector {
-    type Out = (Vec<Ranges>, Vec<u32>);
+    type Out = (Vec<Ranges>, LineMapping);
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         self.ranges.push((before, after));
