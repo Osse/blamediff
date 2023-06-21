@@ -7,7 +7,7 @@ macro_rules! blame_test {
         #[test]
         fn $test_name() {
             let r = gix::discover(".").unwrap();
-            let blame = culpa::blame_file(&r, $range, true, &Path::new(common::FILE)).unwrap();
+            let blame = culpa::blame_file(&r, $range, false, &Path::new(common::FILE)).unwrap();
             let fasit = common::run_git_blame($range, &[]);
             common::compare($range, blame.blamed_lines(), fasit);
         }
@@ -177,4 +177,3 @@ blame_test!(t15_11, "f7a3a57..d7d6328");
 blame_test!(t15_12, "392db1b..d7d6328");
 blame_test!(t15_13, "bb48275..d7d6328");
 blame_test!(t15_14, "c57fe89..d7d6328");
-

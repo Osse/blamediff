@@ -199,6 +199,9 @@ impl IncompleteBlame {
 
     fn raw_assign(&mut self, lines: Range<u32>, boundary: bool, id: ObjectId) {
         let gaps = self.blamed_lines.gaps(&lines).collect::<Vec<_>>();
+        if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
+            dbg!(&gaps);
+        }
 
         for r in gaps {
             self.blamed_lines.insert(r, (boundary, id))
@@ -227,9 +230,15 @@ impl IncompleteBlame {
     }
 
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
+        if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
+            dbg!(ranges);
+        }
         for BeforeAfter { before, after } in ranges.iter().cloned() {
             let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
             let true_ranges = line_mapping.get_true_lines(after);
+            if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
+                dbg!(&true_ranges);
+            }
             for r in true_ranges {
                 self.assign(r, id);
             }
@@ -348,8 +357,6 @@ pub fn blame_file(
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
 
-    dbg!(&commits);
-
     for commit_info in &commits {
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
@@ -367,13 +374,20 @@ pub fn blame_file(
 
                 match (&entry, prev_entry) {
                     (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                        let (ranges, line_mapping) =
-                            diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
-                        blame_state.process(&ranges, commit);
-                        blame_state.line_mappings.insert(prev_commit, line_mapping);
+                        let changes = diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
+                        blame_state.process(&changes.ranges, commit);
+
+                        if !blame_state.line_mappings.contains_key(&prev_commit) {
+                            blame_state
+                                .line_mappings
+                                .insert(prev_commit, changes.line_mapping.clone());
+                        }
                     }
                     (Some(_e), Some(_p_e)) => {
                         // The two files are identical
+                        blame_state
+                            .line_mappings
+                            .insert(prev_commit, line_mapping.clone());
                         continue;
                     }
                     (Some(_e), None) => {
@@ -396,7 +410,7 @@ pub fn blame_file(
                     match (&entry, prev_entry) {
                         (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
                             let changes =
-                                diff_tree_entries2(p_e, e.to_owned(), line_mapping.clone())?;
+                                diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
 
                             blame_state
                                 .line_mappings
@@ -406,11 +420,18 @@ pub fn blame_file(
                         }
                         (Some(_e), Some(_p_e)) => {
                             // The two files are identical
-                            merge_changes.push((Changes::default()));
+                            blame_state
+                                .line_mappings
+                                .insert(*prev_commit, line_mapping.clone());
+
+                            merge_changes.push(Changes::default());
                         }
                         (Some(_e), None) => {
                             // File doesn't exist in previous commit
                             // Attribute remaining lines to this commit
+                            blame_state
+                                .line_mappings
+                                .insert(*prev_commit, line_mapping.clone());
                         }
                         (None, _) => unreachable!("File doesn't exist in current commit"),
                     };
