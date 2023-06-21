@@ -1,7 +1,7 @@
 use gix::diff::blob::{intern::*, Sink};
 use std::{collections::HashMap, ops::Range};
 
-use crate::blame::LineMapping;
+use crate::line_mapping::LineMapping;
 
 #[derive(Clone, Debug, Default)]
 pub struct BeforeAfter {
@@ -40,23 +40,8 @@ where
 
     fn update_mapping(&mut self) {
         for BeforeAfter { before, after } in &self.ranges {
-            let alen = after.len();
-            let blen = before.len();
-            let pos = self.line_mapping.partition_point(|v| *v < after.end);
-
-            if alen > blen {
-                let offset = alen - blen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v -= offset as u32;
-                }
-            } else if blen > alen {
-                let offset = blen - alen;
-
-                for v in &mut self.line_mapping[pos..] {
-                    *v += offset as u32;
-                }
-            }
+            self.line_mapping
+                .update_mapping(before.clone(), after.clone());
         }
     }
 }

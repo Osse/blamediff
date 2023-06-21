@@ -17,6 +17,7 @@ pub use blame::*;
 mod error;
 pub use error::*;
 
+mod line_mapping;
 mod sinks;
 
 /// A [`Result`](std::result::Result) alias where the `Err` case is [`error::Error`].

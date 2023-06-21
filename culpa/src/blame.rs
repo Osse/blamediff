@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ops::Range,
-    path::Path,
-};
+use std::{collections::HashMap, ops::Range, path::Path};
 
 use gix::{
     diff::blob::{diff, intern::InternedInput, Algorithm},
@@ -11,9 +7,12 @@ use gix::{
 
 use rangemap::RangeMap;
 
-use crate::error;
-use crate::sinks::{BeforeAfter, Changes, RangeAndLineCollector};
-use crate::Result;
+use crate::{
+    error,
+    line_mapping::LineMapping,
+    sinks::{BeforeAfter, Changes, RangeAndLineCollector},
+    Result,
+};
 
 ///  A line from the input file with blame information.
 pub struct BlamedLine<'a> {
@@ -84,93 +83,6 @@ impl Origin {
 struct Line {
     boundary: bool,
     origin: Origin,
-}
-
-fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
-    let mut ranges = Vec::with_capacity(slice.len());
-
-    // TODO: When group_by becomes stable
-    while !slice.is_empty() {
-        let mut head_len = 1;
-        let mut iter = slice.windows(2);
-
-        while let Some([l, r]) = iter.next() {
-            if *l + 1 == *r {
-                head_len += 1;
-            } else {
-                break;
-            }
-        }
-
-        let (head, tail) = slice.split_at(head_len);
-        slice = tail;
-
-        ranges.push(*head.first().unwrap()..*head.last().unwrap() + 1);
-    }
-
-    ranges
-}
-
-/// A LineMapping is map from actual line number in the blamed file to the line
-/// number in a previous version.
-#[derive(Clone, Default, Eq, PartialEq)]
-pub struct LineMapping(Vec<u32>);
-
-impl LineMapping {
-    pub fn from_vec(v: Vec<u32>) -> Self {
-        Self(v)
-    }
-
-    pub fn from_range(r: Range<u32>) -> Self {
-        Self(Vec::from_iter(r))
-    }
-
-    fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
-        let mut true_lines = vec![];
-
-        for fake_line in fake_lines {
-            for (true_line, mapped_line) in self.0.iter().enumerate() {
-                if *mapped_line == fake_line {
-                    true_lines.push(true_line as u32);
-                }
-            }
-        }
-
-        let ranges = make_ranges(&true_lines);
-
-        ranges
-    }
-}
-
-impl std::ops::Deref for LineMapping {
-    type Target = [u32];
-
-    fn deref(&self) -> &[u32] {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for LineMapping {
-    fn deref_mut(&mut self) -> &mut [u32] {
-        &mut self.0
-    }
-}
-
-impl std::fmt::Debug for LineMapping {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let m: BTreeMap<usize, u32> =
-            BTreeMap::from_iter(self.0.iter().enumerate().filter_map(|(i, e)| {
-                if i as u32 != *e {
-                    Some((i, *e))
-                } else {
-                    None
-                }
-            }));
-        f.debug_struct("LineMapping")
-            .field("length", &self.0.len())
-            .field("map", &m)
-            .finish()
-    }
 }
 
 #[derive(Debug)]
