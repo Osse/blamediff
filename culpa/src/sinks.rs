@@ -1,11 +1,17 @@
 use gix::diff::blob::{intern::*, Sink};
 use std::{collections::HashMap, ops::Range};
 
-pub type Ranges = (Range<u32>, Range<u32>);
+use crate::blame::LineMapping;
+
+#[derive(Clone, Debug, Default)]
+pub struct BeforeAfter {
+    pub before: Range<u32>,
+    pub after: Range<u32>,
+}
 
 /// Just collects the ranges given to it.
 pub struct RangeCollector {
-    ranges: Vec<Ranges>,
+    ranges: Vec<BeforeAfter>,
 }
 
 impl RangeCollector {
@@ -15,17 +21,16 @@ impl RangeCollector {
 }
 
 impl Sink for RangeCollector {
-    type Out = Vec<Ranges>;
+    type Out = Vec<BeforeAfter>;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push((before, after));
+        self.ranges.push(BeforeAfter { before, after });
     }
 
     fn finish(self) -> Self::Out {
         self.ranges
     }
 }
-use crate::blame::LineMapping;
 
 /// Collects the ranges given to it and the old and new line contents for the
 /// collected lines.
@@ -33,7 +38,7 @@ pub struct RangeAndLineCollector<'a, T>
 where
     T: std::hash::Hash + std::cmp::Eq + std::fmt::Display + ToString,
 {
-    ranges: Vec<Ranges>,
+    ranges: Vec<BeforeAfter>,
     old_lines: HashMap<u32, String>,
     new_lines: HashMap<u32, String>,
 
@@ -57,7 +62,7 @@ where
     }
 
     fn update_mapping(&mut self) {
-        for (before, after) in &self.ranges {
+        for BeforeAfter { before, after } in &self.ranges {
             let alen = after.len();
             let blen = before.len();
             let pos = self.line_mapping.partition_point(|v| *v < after.end);
@@ -81,7 +86,7 @@ where
 
 #[derive(Debug, Default)]
 pub struct Changes {
-    pub ranges: Vec<Ranges>,
+    pub ranges: Vec<BeforeAfter>,
     pub old_lines: HashMap<u32, String>,
     pub new_lines: HashMap<u32, String>,
     pub line_mapping: LineMapping,
@@ -94,7 +99,10 @@ where
     type Out = Changes;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push((before.clone(), after.clone()));
+        self.ranges.push(BeforeAfter {
+            before: before.clone(),
+            after: after.clone(),
+        });
         for l in before {
             self.old_lines.insert(
                 l,
@@ -122,7 +130,7 @@ where
 }
 
 pub struct MappedRangeCollector {
-    ranges: Vec<Ranges>,
+    ranges: Vec<BeforeAfter>,
     line_mapping: LineMapping,
 }
 
@@ -135,7 +143,7 @@ impl MappedRangeCollector {
     }
 
     fn update_mapping(&mut self) {
-        for (before, after) in &self.ranges {
+        for BeforeAfter { before, after } in &self.ranges {
             let alen = after.len();
             let blen = before.len();
             let pos = self.line_mapping.partition_point(|v| *v < after.end);
@@ -158,10 +166,10 @@ impl MappedRangeCollector {
 }
 
 impl Sink for MappedRangeCollector {
-    type Out = (Vec<Ranges>, LineMapping);
+    type Out = (Vec<BeforeAfter>, LineMapping);
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.ranges.push((before, after));
+        self.ranges.push(BeforeAfter { before, after });
     }
 
     fn finish(mut self) -> Self::Out {

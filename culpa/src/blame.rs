@@ -12,7 +12,7 @@ use gix::{
 use rangemap::RangeMap;
 
 use crate::error;
-use crate::sinks::{Changes, MappedRangeCollector, RangeAndLineCollector, Ranges};
+use crate::sinks::{BeforeAfter, Changes, MappedRangeCollector, RangeAndLineCollector};
 use crate::Result;
 
 ///  A line from the input file with blame information.
@@ -226,8 +226,8 @@ impl IncompleteBlame {
         self.raw_assign(self.total_range.clone(), true, id)
     }
 
-    fn process(&mut self, ranges: &[(Range<u32>, Range<u32>)], id: ObjectId) {
-        for (_before, after) in ranges.iter().cloned() {
+    fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
+        for BeforeAfter { before, after } in ranges.iter().cloned() {
             let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
             let true_ranges = line_mapping.get_true_lines(after);
             for r in true_ranges {
@@ -269,7 +269,7 @@ fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
     line_mapping: LineMapping,
-) -> Result<(Vec<Ranges>, LineMapping)> {
+) -> Result<(Vec<BeforeAfter>, LineMapping)> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
 
