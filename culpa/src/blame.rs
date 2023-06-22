@@ -26,7 +26,7 @@ pub struct BlamedLine<'a> {
     pub line_no: usize,
 
     /// The line number of the line in the revision that introduced it
-    pub orig_line_no: usize,
+    pub orig_line_no: u32,
 
     /// The line contents themselves
     pub line: &'a str,
@@ -37,14 +37,14 @@ pub struct BlamedLine<'a> {
 /// requested for.
 #[derive(Debug)]
 pub struct Blame {
-    ids: Vec<(bool, ObjectId)>,
+    ids: Vec<(bool, u32, ObjectId)>,
     contents: String,
 }
 
 impl Blame {
     /// Returns a slice of [`ObjectId`]s, one for each line of the blamed file. The
     /// list most likely contains both consecutive and non-consecutive duplicates.
-    pub fn object_ids(&self) -> &[(bool, ObjectId)] {
+    pub fn object_ids(&self) -> &[(bool, u32, ObjectId)] {
         &self.ids
     }
 
@@ -54,10 +54,10 @@ impl Blame {
             .iter()
             .zip(self.contents.lines().enumerate())
             .map(|(id, (line_no, line))| BlamedLine {
-                id: id.1,
+                id: id.2,
                 boundary: id.0,
-                line_no,
-                orig_line_no: line_no, // TODO
+                line_no: line_no + 1,
+                orig_line_no: id.1 + 1, // TODO
                 line,
             })
             .collect()
@@ -87,7 +87,7 @@ struct Line {
 
 #[derive(Debug)]
 struct IncompleteBlame {
-    blamed_lines: RangeMap<u32, (bool, ObjectId)>,
+    blamed_lines: RangeMap<u32, (bool, u32, ObjectId)>,
     total_range: Range<u32>,
     line_mappings: HashMap<ObjectId, LineTracker>,
     contents: String,
@@ -111,17 +111,29 @@ impl IncompleteBlame {
 
     fn raw_assign(&mut self, lines: Range<u32>, boundary: bool, id: ObjectId) {
         let gaps = self.blamed_lines.gaps(&lines).collect::<Vec<_>>();
-        if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
-            dbg!(&gaps);
-        }
 
         for r in gaps {
-            self.blamed_lines.insert(r, (boundary, id))
+            self.blamed_lines.insert(r, (boundary, 0, id))
         }
     }
 
     fn assign(&mut self, lines: Range<u32>, id: ObjectId) {
         self.raw_assign(lines, false, id)
+    }
+
+    fn raw_assign2(&mut self, true_line: u32, fake_line: u32, boundary: bool, id: ObjectId) {
+        let gaps = self
+            .blamed_lines
+            .gaps(&(true_line..true_line + 1))
+            .collect::<Vec<_>>();
+
+        for r in gaps {
+            self.blamed_lines.insert(r, (boundary, fake_line, id))
+        }
+    }
+
+    fn assign2(&mut self, true_line: u32, fake_line: u32, id: ObjectId) {
+        self.raw_assign2(true_line, fake_line, false, id)
     }
 
     fn assign_as_boundary(&mut self, id: ObjectId) {
@@ -130,7 +142,7 @@ impl IncompleteBlame {
         let r = self
             .blamed_lines
             .iter()
-            .filter(|(_, &(_, idd))| idd == id)
+            .filter(|(_, &(_, _, idd))| idd == id)
             .map(|(r, _)| r.clone())
             .collect::<Vec<_>>();
 
@@ -142,15 +154,12 @@ impl IncompleteBlame {
     }
 
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
-        if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
-            dbg!(ranges);
-        }
         for BeforeAfter { before, after } in ranges.iter().cloned() {
             let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
-            let true_ranges = line_mapping.get_true_lines(after);
-            if id == ObjectId::from_hex(b"2064b3c8178fdd1e618b2ccef061d4934d5619e4").unwrap() {
-                dbg!(&true_ranges);
-            }
+            let true_ranges = line_mapping.get_true_lines(after.clone());
+            // for (true_line, fake_line) in true_ranges.into_iter().flatten().zip(after) {
+            //     self.assign2(true_line, fake_line, id);
+            // }
             for r in true_ranges {
                 self.assign(r, id);
             }

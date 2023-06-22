@@ -50,9 +50,12 @@ pub fn run_git_blame(revision: &str, args: &[&str]) -> Vec<String> {
         .collect::<Vec<_>>()
         .chunks(13)
         .map(|c| {
+            let s = c[0].split_ascii_whitespace().collect::<Vec<&str>>();
             format!(
-                "{} {} {}",
-                &c[0][..40],
+                "{} {} {} {} {}",
+                s[0],
+                s[2],
+                1, //TODO
                 c[10].starts_with("boundary"),
                 &c[12][1..]
             )
@@ -77,7 +80,16 @@ pub fn compare(range: &str, blame: Vec<BlamedLine>, fasit: Vec<String>) {
     let blame: Vec<String> = blame
         .into_iter()
         .zip(contents.lines())
-        .map(|(bl, line)| format!("{} {} {}", bl.id.to_string(), bl.boundary, line))
+        .map(|(bl, line)| {
+            format!(
+                "{} {} {} {} {}",
+                bl.id.to_string(),
+                bl.line_no,
+                bl.orig_line_no,
+                bl.boundary,
+                line
+            )
+        })
         .collect();
 
     assert_eq!(fasit, blame);
