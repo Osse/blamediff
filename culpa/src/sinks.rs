@@ -1,7 +1,7 @@
 use gix::diff::blob::{intern::*, Sink};
 use std::{collections::HashMap, ops::Range};
 
-use crate::line_mapping::LineMapping;
+use crate::line_tracking::LineTracker;
 
 #[derive(Clone, Debug, Default)]
 pub struct BeforeAfter {
@@ -19,7 +19,7 @@ where
     old_lines: HashMap<u32, String>,
     new_lines: HashMap<u32, String>,
 
-    line_mapping: LineMapping,
+    line_mapping: LineTracker,
 
     interner: &'a InternedInput<T>,
 }
@@ -28,7 +28,7 @@ impl<'a, T> RangeAndLineCollector<'a, T>
 where
     T: std::hash::Hash + std::cmp::Eq + std::fmt::Display + ToString,
 {
-    pub fn new(interner: &'a InternedInput<T>, line_mapping: LineMapping) -> Self {
+    pub fn new(interner: &'a InternedInput<T>, line_mapping: LineTracker) -> Self {
         Self {
             ranges: vec![],
             old_lines: HashMap::new(),
@@ -51,7 +51,7 @@ pub struct Changes {
     pub ranges: Vec<BeforeAfter>,
     pub old_lines: HashMap<u32, String>,
     pub new_lines: HashMap<u32, String>,
-    pub line_mapping: LineMapping,
+    pub line_mapping: LineTracker,
 }
 
 impl<'a, T> Sink for RangeAndLineCollector<'a, T>

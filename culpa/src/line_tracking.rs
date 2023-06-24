@@ -36,9 +36,9 @@ enum Mapping {
 /// A LineMapping is map from actual line number in the blamed file to the line
 /// number in a previous version.
 #[derive(Clone, Default, Eq, PartialEq)]
-pub struct LineMapping(Vec<u32>);
+pub struct LineTracker(Vec<u32>);
 
-impl LineMapping {
+impl LineTracker {
     pub fn from_vec(v: Vec<u32>) -> Self {
         Self(v)
     }
@@ -85,7 +85,7 @@ impl LineMapping {
     }
 }
 
-impl std::ops::Deref for LineMapping {
+impl std::ops::Deref for LineTracker {
     type Target = [u32];
 
     fn deref(&self) -> &[u32] {
@@ -93,13 +93,13 @@ impl std::ops::Deref for LineMapping {
     }
 }
 
-impl std::ops::DerefMut for LineMapping {
+impl std::ops::DerefMut for LineTracker {
     fn deref_mut(&mut self) -> &mut [u32] {
         &mut self.0
     }
 }
 
-impl std::fmt::Debug for LineMapping {
+impl std::fmt::Debug for LineTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let m: BTreeMap<usize, u32> =
             BTreeMap::from_iter(self.0.iter().enumerate().filter_map(|(i, e)| {
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn identity() {
-        let lm = LineMapping::from_range(0..50);
+        let lm = LineTracker::from_range(0..50);
 
         let r = lm.get_true_lines(0..10);
 
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn basic() {
-        let mut lm = LineMapping::from_range(0..50);
+        let mut lm = LineTracker::from_range(0..50);
 
         lm.update_mapping(5..7, 5..10);
 

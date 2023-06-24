@@ -9,7 +9,7 @@ use rangemap::RangeMap;
 
 use crate::{
     error,
-    line_mapping::LineMapping,
+    line_tracking::LineTracker,
     sinks::{BeforeAfter, Changes, RangeAndLineCollector},
     Result,
 };
@@ -89,7 +89,7 @@ struct Line {
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, ObjectId)>,
     total_range: Range<u32>,
-    line_mappings: HashMap<ObjectId, LineMapping>,
+    line_mappings: HashMap<ObjectId, LineTracker>,
     contents: String,
 }
 
@@ -99,7 +99,7 @@ impl IncompleteBlame {
         let total_range = 0..lines as u32;
 
         let mut line_mappings = HashMap::new();
-        line_mappings.insert(id, LineMapping::from_range(total_range.clone()));
+        line_mappings.insert(id, LineTracker::from_range(total_range.clone()));
 
         Self {
             blamed_lines: RangeMap::new(),
@@ -189,7 +189,7 @@ fn tree_entry(
 fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-    line_mapping: LineMapping,
+    line_mapping: LineTracker,
 ) -> Result<Changes> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
