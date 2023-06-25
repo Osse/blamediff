@@ -107,20 +107,6 @@ impl LineTracker {
     }
 }
 
-impl std::ops::Deref for LineTracker {
-    type Target = [u32];
-
-    fn deref(&self) -> &[u32] {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for LineTracker {
-    fn deref_mut(&mut self) -> &mut [u32] {
-        &mut self.0
-    }
-}
-
 impl std::fmt::Debug for LineTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let m: BTreeMap<usize, u32> =
