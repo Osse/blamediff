@@ -94,7 +94,7 @@ struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, u32, ObjectId)>,
     blamed_lines2: Vec<Option<Line>>,
     total_range: Range<u32>,
-    line_mappings: HashMap<ObjectId, LineTracker>,
+    line_trackers: HashMap<ObjectId, LineTracker>,
     contents: String,
 }
 
@@ -110,7 +110,7 @@ impl IncompleteBlame {
             blamed_lines: RangeMap::new(),
             blamed_lines2: vec![None; lines],
             total_range: total_range,
-            line_mappings,
+            line_trackers: line_mappings,
             contents,
         }
     }
@@ -122,12 +122,12 @@ impl IncompleteBlame {
             self.blamed_lines.insert(r, (boundary, 0, id))
         }
 
-        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
+        let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
         for l in lines {
             if self.blamed_lines2[l as usize].is_none() {
                 self.blamed_lines2[l as usize] = Some(Line {
                     boundary,
-                    original_line_no: line_mapping.get_fake_line(l as u32).unwrap(),
+                    original_line_no: line_tracker.get_fake_line(l as u32).unwrap(),
                     id,
                 });
             }
@@ -154,7 +154,7 @@ impl IncompleteBlame {
 
         self.raw_assign(self.total_range.clone(), true, id);
 
-        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
+        let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
         // First remove anything that has already been assigned to this id
         // because it would have been assigned with boundary = false
 
@@ -166,7 +166,7 @@ impl IncompleteBlame {
         {
             *line = Some(Line {
                 boundary: true,
-                original_line_no: line_mapping.get_fake_line(idx as u32).unwrap(),
+                original_line_no: line_tracker.get_fake_line(idx as u32).unwrap(),
                 id,
             });
         }
@@ -174,8 +174,8 @@ impl IncompleteBlame {
 
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
         for BeforeAfter { before, after } in ranges.iter().cloned() {
-            let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
-            let true_ranges = line_mapping.get_true_lines(after.clone());
+            let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
+            let true_ranges = line_tracker.get_true_lines(after.clone());
             for r in true_ranges {
                 self.assign(r, id);
             }
@@ -218,7 +218,7 @@ fn tree_entry(
 fn diff_tree_entries(
     old: object::tree::Entry,
     new: object::tree::Entry,
-    line_mapping: LineTracker,
+    line_tracker: LineTracker,
 ) -> Result<Changes> {
     let old = &old.object()?.data;
     let new = &new.object()?.data;
@@ -231,7 +231,7 @@ fn diff_tree_entries(
     Ok(diff(
         Algorithm::Histogram,
         &input,
-        RangeAndLineCollector::new(&input, line_mapping),
+        RangeAndLineCollector::new(&input, line_tracker),
     ))
 }
 
@@ -300,7 +300,7 @@ pub fn blame_file(
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
 
-        let line_mapping = blame_state.line_mappings.get(&commit).unwrap().clone();
+        let line_tracker = blame_state.line_trackers.get(&commit).unwrap().clone();
 
         match commit_info.parent_ids.len() {
             0 => {
@@ -313,20 +313,20 @@ pub fn blame_file(
 
                 match (&entry, prev_entry) {
                     (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
-                        let changes = diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
+                        let changes = diff_tree_entries(p_e, e.to_owned(), line_tracker.clone())?;
                         blame_state.process(&changes.ranges, commit);
 
-                        if !blame_state.line_mappings.contains_key(&prev_commit) {
+                        if !blame_state.line_trackers.contains_key(&prev_commit) {
                             blame_state
-                                .line_mappings
-                                .insert(prev_commit, changes.line_mapping.clone());
+                                .line_trackers
+                                .insert(prev_commit, changes.line_tracker.clone());
                         }
                     }
                     (Some(_e), Some(_p_e)) => {
                         // The two files are identical
                         blame_state
-                            .line_mappings
-                            .insert(prev_commit, line_mapping.clone());
+                            .line_trackers
+                            .insert(prev_commit, line_tracker.clone());
                         continue;
                     }
                     (Some(_e), None) => {
@@ -349,19 +349,19 @@ pub fn blame_file(
                     match (&entry, prev_entry) {
                         (Some(e), Some(p_e)) if e.object_id() != p_e.object_id() => {
                             let changes =
-                                diff_tree_entries(p_e, e.to_owned(), line_mapping.clone())?;
+                                diff_tree_entries(p_e, e.to_owned(), line_tracker.clone())?;
 
                             blame_state
-                                .line_mappings
-                                .insert(*prev_commit, changes.line_mapping.clone());
+                                .line_trackers
+                                .insert(*prev_commit, changes.line_tracker.clone());
 
                             merge_changes.push(changes);
                         }
                         (Some(_e), Some(_p_e)) => {
                             // The two files are identical
                             blame_state
-                                .line_mappings
-                                .insert(*prev_commit, line_mapping.clone());
+                                .line_trackers
+                                .insert(*prev_commit, line_tracker.clone());
 
                             merge_changes.push(Changes::default());
                         }
@@ -369,8 +369,8 @@ pub fn blame_file(
                             // File doesn't exist in previous commit
                             // Attribute remaining lines to this commit
                             blame_state
-                                .line_mappings
-                                .insert(*prev_commit, line_mapping.clone());
+                                .line_trackers
+                                .insert(*prev_commit, line_tracker.clone());
                         }
                         (None, _) => unreachable!("File doesn't exist in current commit"),
                     };

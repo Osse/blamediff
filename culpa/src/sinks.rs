@@ -55,7 +55,7 @@ pub struct Changes {
     pub ranges: Vec<BeforeAfter>,
     pub old_lines: HashMap<u32, String>,
     pub new_lines: HashMap<u32, String>,
-    pub line_mapping: LineTracker,
+    pub line_tracker: LineTracker,
 }
 
 impl<'a, T> Sink for RangeAndLineCollector<'a, T>
@@ -90,7 +90,7 @@ where
             ranges: self.ranges,
             old_lines: self.old_lines,
             new_lines: self.new_lines,
-            line_mapping: self.line_mapping,
+            line_tracker: self.line_mapping,
         }
     }
 }
