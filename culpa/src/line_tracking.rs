@@ -163,14 +163,13 @@ mod tests {
 
         lm.update_mapping(vec![(5..7, 5..10)]);
 
-        let r = lm.get_true_lines(0..47);
+        // TODO: Should return two ranges: 0..5, 13..50
+        let r = lm.get_true_lines(0..10);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0], 0..13);
 
-        // assert_eq!(r.len(), 1);
-        // assert_eq!(r[0], 0..8);
-        // assert_eq!(r[1], 10..11);
-        // assert_eq!(r[2], 8..9);
-        // assert_eq!(r[3], 11..12);
-        // assert_eq!(r[4], 9..10);
-        // assert_eq!(r[5], 12..50);
+        let r = lm.get_true_lines(40..47);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0], 43..50);
     }
 }
