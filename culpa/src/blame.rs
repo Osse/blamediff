@@ -53,13 +53,15 @@ impl Blame {
         self.ids
             .iter()
             .zip(self.contents.lines().enumerate())
-            .map(|(id, (line_no, line))| BlamedLine {
-                id: id.2,
-                boundary: id.0,
-                line_no: line_no + 1,
-                orig_line_no: id.1 + 1, // TODO
-                line,
-            })
+            .map(
+                |((boundary, orig_line_no, id), (line_no, line))| BlamedLine {
+                    id: *id,
+                    boundary: *boundary,
+                    line_no: line_no + 1,
+                    orig_line_no: *orig_line_no + 1,
+                    line,
+                },
+            )
             .collect()
     }
 }
@@ -82,12 +84,15 @@ impl Origin {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct Line {
     boundary: bool,
-    origin: Origin,
+    original_line_no: u32,
+    id: ObjectId,
+    // origin: Origin,
 }
 
 #[derive(Debug)]
 struct IncompleteBlame {
     blamed_lines: RangeMap<u32, (bool, u32, ObjectId)>,
+    blamed_lines2: Vec<Option<Line>>,
     total_range: Range<u32>,
     line_mappings: HashMap<ObjectId, LineTracker>,
     contents: String,
@@ -103,6 +108,7 @@ impl IncompleteBlame {
 
         Self {
             blamed_lines: RangeMap::new(),
+            blamed_lines2: vec![None; lines],
             total_range: total_range,
             line_mappings,
             contents,
@@ -115,25 +121,21 @@ impl IncompleteBlame {
         for r in gaps {
             self.blamed_lines.insert(r, (boundary, 0, id))
         }
-    }
 
-    fn assign(&mut self, lines: Range<u32>, id: ObjectId) {
-        self.raw_assign(lines, false, id)
-    }
-
-    fn raw_assign2(&mut self, true_line: u32, fake_line: u32, boundary: bool, id: ObjectId) {
-        let gaps = self
-            .blamed_lines
-            .gaps(&(true_line..true_line + 1))
-            .collect::<Vec<_>>();
-
-        for r in gaps {
-            self.blamed_lines.insert(r, (boundary, fake_line, id))
+        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
+        for l in lines {
+            if self.blamed_lines2[l as usize].is_none() {
+                self.blamed_lines2[l as usize] = Some(Line {
+                    boundary,
+                    original_line_no: line_mapping.get_fake_line(l as u32).unwrap(),
+                    id,
+                });
+            }
         }
     }
 
-    fn assign2(&mut self, true_line: u32, fake_line: u32, id: ObjectId) {
-        self.raw_assign2(true_line, fake_line, false, id)
+    fn assign(&mut self, lines: Range<u32>, id: ObjectId) {
+        self.raw_assign(lines.clone(), false, id);
     }
 
     fn assign_as_boundary(&mut self, id: ObjectId) {
@@ -150,16 +152,30 @@ impl IncompleteBlame {
             self.blamed_lines.remove(r);
         }
 
-        self.raw_assign(self.total_range.clone(), true, id)
+        self.raw_assign(self.total_range.clone(), true, id);
+
+        let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
+        // First remove anything that has already been assigned to this id
+        // because it would have been assigned with boundary = false
+
+        for (idx, line) in self
+            .blamed_lines2
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, o)| o.is_none() || o.as_ref().unwrap().id == id)
+        {
+            *line = Some(Line {
+                boundary: true,
+                original_line_no: line_mapping.get_fake_line(idx as u32).unwrap(),
+                id,
+            });
+        }
     }
 
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
         for BeforeAfter { before, after } in ranges.iter().cloned() {
             let line_mapping = self.line_mappings.get(&id).expect("have line mapping");
             let true_ranges = line_mapping.get_true_lines(after.clone());
-            // for (true_line, fake_line) in true_ranges.into_iter().flatten().zip(after) {
-            //     self.assign2(true_line, fake_line, id);
-            // }
             for r in true_ranges {
                 self.assign(r, id);
             }
@@ -168,13 +184,17 @@ impl IncompleteBlame {
 
     fn is_complete(&self) -> bool {
         self.blamed_lines.gaps(&self.total_range).count() == 0
+            && !self.blamed_lines2.iter().any(|o| o.is_none())
     }
 
     fn finish(self) -> Blame {
         let ids = self
-            .blamed_lines
+            .blamed_lines2
             .iter()
-            .flat_map(|(r, c)| r.clone().map(|_l| *c))
+            .map(|o| {
+                let o = o.as_ref().unwrap();
+                (o.boundary, o.original_line_no, o.id)
+            })
             .collect::<Vec<_>>();
 
         Blame {
@@ -225,8 +245,6 @@ fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool>
 
     Ok((stat.mtime.secs as u64) < mod_secs)
 }
-
-fn assign_blame(ib: &mut IncompleteBlame, old: gix::ObjectId, new: gix::ObjectId) {}
 
 /// Obtain the blame record for the given path starting from the given revision,
 /// optionally limiting it at the end.

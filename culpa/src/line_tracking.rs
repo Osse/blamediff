@@ -64,22 +64,44 @@ impl LineTracker {
         ranges
     }
 
-    pub fn update_mapping(&mut self, before: Range<u32>, after: Range<u32>) {
-        let alen = after.len();
-        let blen = before.len();
-        let pos = self.0.partition_point(|v| *v < after.end);
-
-        if alen > blen {
-            let offset = alen - blen;
-
-            for v in &mut self.0[pos..] {
-                *v -= offset as u32;
+    pub fn get_true_line(&self, fake_line: u32) -> Option<u32> {
+        for (true_line, mapped_line) in self.0.iter().enumerate() {
+            if *mapped_line == fake_line {
+                return Some(true_line as u32);
             }
-        } else if blen > alen {
-            let offset = blen - alen;
+        }
 
-            for v in &mut self.0[pos..] {
-                *v += offset as u32;
+        None
+    }
+
+    pub fn get_fake_line(&self, true_line: u32) -> Option<u32> {
+        self.0.get(true_line as usize).copied()
+    }
+
+    pub fn update_mapping(&mut self, before_after: Vec<(Range<u32>, Range<u32>)>) {
+        // Collect all positions first. Otherwise the first pair of before-after
+        // will shift the next pair down
+        let positions = before_after
+            .iter()
+            .map(|(_before, after)| self.0.partition_point(|v| *v < after.end))
+            .collect::<Vec<_>>();
+
+        for ((before, after), pos) in before_after.iter().zip(positions) {
+            let alen = after.len();
+            let blen = before.len();
+
+            if alen > blen {
+                let offset = alen - blen;
+
+                for v in &mut self.0[pos..] {
+                    *v -= offset as u32;
+                }
+            } else if blen > alen {
+                let offset = blen - alen;
+
+                for v in &mut self.0[pos..] {
+                    *v += offset as u32;
+                }
             }
         }
     }
@@ -139,7 +161,7 @@ mod tests {
     fn basic() {
         let mut lm = LineTracker::from_range(0..50);
 
-        lm.update_mapping(5..7, 5..10);
+        lm.update_mapping(vec![(5..7, 5..10)]);
 
         let r = lm.get_true_lines(0..47);
 

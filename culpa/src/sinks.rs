@@ -39,10 +39,14 @@ where
     }
 
     fn update_mapping(&mut self) {
-        for BeforeAfter { before, after } in &self.ranges {
-            self.line_mapping
-                .update_mapping(before.clone(), after.clone());
-        }
+        let r = self
+            .ranges
+            .iter()
+            .cloned()
+            .map(|ba| (ba.before, ba.after))
+            .collect::<Vec<_>>();
+
+        self.line_mapping.update_mapping(r);
     }
 }
 
