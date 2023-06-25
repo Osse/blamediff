@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::iter::Map;
 use std::ops::Range;
 
 fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
@@ -26,25 +27,34 @@ fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
     ranges
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Mapping {
-    Identity,
-    ShiftedUp(u32),
-    ShiftedDown(u32),
+    Identity(u32),
+    Shifted(u32),
+    Gone,
+}
+
+impl Mapping {
+    fn inner(&self) -> Option<u32> {
+        match self {
+            Self::Identity(s) | Self::Shifted(s) => Some(*s),
+            Self::Gone => None,
+        }
+    }
 }
 
 /// A LineMapping is map from actual line number in the blamed file to the line
 /// number in a previous version.
 #[derive(Clone, Default, Eq, PartialEq)]
-pub struct LineTracker(Vec<u32>);
+pub struct LineTracker(Vec<Mapping>);
 
 impl LineTracker {
-    pub fn from_vec(v: Vec<u32>) -> Self {
-        Self(v)
-    }
+    // pub fn from_vec(v: Vec<u32>) -> Self {
+    //     Self(v)
+    // }
 
     pub fn from_range(r: Range<u32>) -> Self {
-        Self(Vec::from_iter(r))
+        Self(r.map(|i| Mapping::Identity(i)).collect())
     }
 
     pub fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
@@ -52,7 +62,9 @@ impl LineTracker {
 
         for fake_line in fake_lines {
             for (true_line, mapped_line) in self.0.iter().enumerate() {
-                if *mapped_line == fake_line {
+                if mapped_line == &Mapping::Shifted(fake_line)
+                    || mapped_line == &Mapping::Identity(fake_line)
+                {
                     true_lines.push(true_line as u32);
                 }
             }
@@ -66,7 +78,7 @@ impl LineTracker {
 
     pub fn get_true_line(&self, fake_line: u32) -> Option<u32> {
         for (true_line, mapped_line) in self.0.iter().enumerate() {
-            if *mapped_line == fake_line {
+            if mapped_line == &Mapping::Shifted(fake_line) {
                 return Some(true_line as u32);
             }
         }
@@ -75,15 +87,35 @@ impl LineTracker {
     }
 
     pub fn get_fake_line(&self, true_line: u32) -> Option<u32> {
-        self.0.get(true_line as usize).copied()
+        match self.0.get(true_line as usize) {
+            Some(m) => match m {
+                Mapping::Identity(i) => Some(*i),
+                Mapping::Shifted(s) => Some(*s),
+                Mapping::Gone => None,
+            },
+            None => None,
+        }
     }
 
     pub fn update_mapping(&mut self, before_after: Vec<(Range<u32>, Range<u32>)>) {
+        // for (_before, after) in &before_after {
+        //     for m in self
+        //         .0
+        //         .iter_mut()
+        //         .filter(|m| after.contains(&m.inner().unwrap_or(999999)))
+        //     {
+        //         *m = Mapping::Gone;
+        //     }
+        // }
+
         // Collect all positions first. Otherwise the first pair of before-after
         // will shift the next pair down
         let positions = before_after
             .iter()
-            .map(|(_before, after)| self.0.partition_point(|v| *v < after.end))
+            .map(|(_before, after)| {
+                self.0
+                    .partition_point(|v| v.inner().map(|v| v < after.end).unwrap_or(true))
+            })
             .collect::<Vec<_>>();
 
         for ((before, after), pos) in before_after.iter().zip(positions) {
@@ -94,13 +126,21 @@ impl LineTracker {
                 let offset = alen - blen;
 
                 for v in &mut self.0[pos..] {
-                    *v -= offset as u32;
+                    *v = match v {
+                        Mapping::Identity(i) => Mapping::Shifted(*i - offset as u32),
+                        Mapping::Shifted(s) => Mapping::Shifted(*s - offset as u32),
+                        Mapping::Gone => Mapping::Gone,
+                    };
                 }
             } else if blen > alen {
                 let offset = blen - alen;
 
                 for v in &mut self.0[pos..] {
-                    *v += offset as u32;
+                    *v = match v {
+                        Mapping::Identity(i) => Mapping::Shifted(*i + offset as u32),
+                        Mapping::Shifted(s) => Mapping::Shifted(*s + offset as u32),
+                        Mapping::Gone => Mapping::Gone,
+                    };
                 }
             }
         }
@@ -109,14 +149,7 @@ impl LineTracker {
 
 impl std::fmt::Debug for LineTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let m: BTreeMap<usize, u32> =
-            BTreeMap::from_iter(self.0.iter().enumerate().filter_map(|(i, e)| {
-                if i as u32 != *e {
-                    Some((i, *e))
-                } else {
-                    None
-                }
-            }));
+        let m = BTreeMap::from_iter(self.0.iter().enumerate());
         f.debug_struct("LineMapping")
             .field("length", &self.0.len())
             .field("map", &m)
@@ -147,12 +180,15 @@ mod tests {
     fn basic() {
         let mut lm = LineTracker::from_range(0..50);
 
-        lm.update_mapping(vec![(5..7, 5..10)]);
+        lm.update_mapping(vec![(5..7, 5..10), (20..30, 23..25)]);
 
-        // TODO: Should return two ranges: 0..5, 13..50
-        let r = lm.get_true_lines(0..10);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0], 0..13);
+        let r = lm.get_true_lines(0..47);
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0], 0..5);
+        assert_eq!(r[1], 10..23);
+        assert_eq!(r[2], 25..42);
+
+        dbg!(&r, &lm);
 
         let r = lm.get_true_lines(40..47);
         assert_eq!(r.len(), 1);
