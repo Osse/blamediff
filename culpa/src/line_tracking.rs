@@ -31,14 +31,13 @@ fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
 enum Mapping {
     Identity(u32),
     Shifted(u32),
-    Gone,
+    Gone(u32), // TODO: Find out why it doesn't work without the inner u32
 }
 
 impl Mapping {
     fn inner(&self) -> Option<u32> {
         match self {
-            Self::Identity(s) | Self::Shifted(s) => Some(*s),
-            Self::Gone => None,
+            Self::Identity(s) | Self::Shifted(s) | Self::Gone(s) => Some(*s),
         }
     }
 }
@@ -57,64 +56,69 @@ impl LineTracker {
         Self(r.map(|i| Mapping::Identity(i)).collect())
     }
 
-    pub fn get_true_lines(&self, fake_lines: Range<u32>) -> Vec<Range<u32>> {
-        let mut true_lines = vec![];
+    pub fn get_current_lines(&self, old_lines: Range<u32>) -> Vec<Range<u32>> {
+        let mut current_lines = vec![];
 
-        for fake_line in fake_lines {
-            for (true_line, mapped_line) in self.0.iter().enumerate() {
-                if mapped_line == &Mapping::Shifted(fake_line)
-                    || mapped_line == &Mapping::Identity(fake_line)
-                {
-                    true_lines.push(true_line as u32);
-                }
-            }
+        for fake_line in old_lines {
+            match self.get_current_line(fake_line) {
+                Some(l) => current_lines.push(l),
+                None => (),
+            };
         }
 
-        true_lines.sort();
-        let ranges = make_ranges(&true_lines);
+        current_lines.sort();
+
+        let ranges = make_ranges(&current_lines);
 
         ranges
     }
 
-    pub fn get_true_line(&self, fake_line: u32) -> Option<u32> {
-        for (true_line, mapped_line) in self.0.iter().enumerate() {
-            if mapped_line == &Mapping::Shifted(fake_line) {
-                return Some(true_line as u32);
+    pub fn get_current_line(&self, old_line: u32) -> Option<u32> {
+        for (current_line, mapped_line) in self.0.iter().enumerate() {
+            if mapped_line == &Mapping::Shifted(old_line)
+                || mapped_line == &Mapping::Identity(old_line)
+            {
+                return Some(current_line as u32);
             }
         }
 
         None
     }
 
-    pub fn get_fake_line(&self, true_line: u32) -> Option<u32> {
-        match self.0.get(true_line as usize) {
+    pub fn get_old_line(&self, current_line: u32) -> Option<u32> {
+        match self.0.get(current_line as usize) {
             Some(m) => match m {
                 Mapping::Identity(i) => Some(*i),
                 Mapping::Shifted(s) => Some(*s),
-                Mapping::Gone => None,
+                Mapping::Gone(g) => None,
             },
             None => None,
         }
     }
 
     pub fn update_mapping(&mut self, before_after: Vec<(Range<u32>, Range<u32>)>) {
-        // for (_before, after) in &before_after {
-        //     for m in self
-        //         .0
-        //         .iter_mut()
-        //         .filter(|m| after.contains(&m.inner().unwrap_or(999999)))
-        //     {
-        //         *m = Mapping::Gone;
-        //     }
-        // }
+        // As part of transforming this line tracker into the next one, mark all
+        // lines in the after ranges Gone.
+        for (_before, after) in &before_after {
+            for m in self
+                .0
+                .iter_mut()
+                .filter(|m| after.contains(&m.inner().unwrap()))
+            {
+                *m = Mapping::Gone(m.inner().unwrap());
+            }
+        }
 
         // Collect all positions first. Otherwise the first pair of before-after
         // will shift the next pair down
         let positions = before_after
             .iter()
             .map(|(_before, after)| {
-                self.0
-                    .partition_point(|v| v.inner().map(|v| v < after.end).unwrap_or(true))
+                self.0.partition_point(|m| match m {
+                    Mapping::Identity(i) | Mapping::Shifted(i) => *i < after.end,
+                    Mapping::Gone(g) => *g < after.end, // Why not always true here
+                                                        // Mapping::Gone(g) => true,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -129,7 +133,7 @@ impl LineTracker {
                     *v = match v {
                         Mapping::Identity(i) => Mapping::Shifted(*i - offset as u32),
                         Mapping::Shifted(s) => Mapping::Shifted(*s - offset as u32),
-                        Mapping::Gone => Mapping::Gone,
+                        Mapping::Gone(g) => Mapping::Gone(*g - offset as u32),
                     };
                 }
             } else if blen > alen {
@@ -139,8 +143,16 @@ impl LineTracker {
                     *v = match v {
                         Mapping::Identity(i) => Mapping::Shifted(*i + offset as u32),
                         Mapping::Shifted(s) => Mapping::Shifted(*s + offset as u32),
-                        Mapping::Gone => Mapping::Gone,
+                        Mapping::Gone(g) => Mapping::Gone(*g + offset as u32),
                     };
+                }
+            }
+        }
+
+        for (index, m) in self.0.iter_mut().enumerate() {
+            if let Mapping::Shifted(s) = m {
+                if *s == index as u32 {
+                    *m = Mapping::Identity(*s);
                 }
             }
         }
@@ -152,7 +164,7 @@ impl LineTracker {
         let v = self
             .0
             .iter()
-            .filter(|m| !matches!(m, Mapping::Gone))
+            .filter(|m| !matches!(m, Mapping::Gone(_)))
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -181,12 +193,12 @@ mod tests {
     fn identity() {
         let lm = LineTracker::from_range(0..50);
 
-        let r = lm.get_true_lines(0..10);
+        let r = lm.get_current_lines(0..10);
 
         assert_eq!(r.len(), 1);
         assert_eq!(r[0], 0..10);
 
-        let r = lm.get_true_lines(35..43);
+        let r = lm.get_current_lines(35..43);
 
         assert_eq!(r.len(), 1);
         assert_eq!(r[0], 35..43);
@@ -198,7 +210,7 @@ mod tests {
 
         lm.update_mapping(vec![(5..7, 5..10), (20..30, 23..25)]);
 
-        let r = lm.get_true_lines(0..47);
+        let r = lm.get_current_lines(0..47);
         assert_eq!(r.len(), 3);
         assert_eq!(r[0], 0..5);
         assert_eq!(r[1], 10..23);
@@ -206,7 +218,7 @@ mod tests {
 
         dbg!(&r, &lm);
 
-        let r = lm.get_true_lines(40..47);
+        let r = lm.get_current_lines(40..47);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0], 43..50);
     }

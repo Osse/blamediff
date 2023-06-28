@@ -127,7 +127,7 @@ impl IncompleteBlame {
             if self.blamed_lines2[l as usize].is_none() {
                 self.blamed_lines2[l as usize] = Some(Line {
                     boundary,
-                    original_line_no: line_tracker.get_fake_line(l as u32).unwrap(),
+                    original_line_no: line_tracker.get_old_line(l as u32).unwrap(),
                     id,
                 });
             }
@@ -166,7 +166,7 @@ impl IncompleteBlame {
         {
             *line = Some(Line {
                 boundary: true,
-                original_line_no: line_tracker.get_fake_line(idx as u32).unwrap(),
+                original_line_no: line_tracker.get_old_line(idx as u32).unwrap(),
                 id,
             });
         }
@@ -175,7 +175,7 @@ impl IncompleteBlame {
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
         for BeforeAfter { before, after } in ranges.iter().cloned() {
             let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
-            let true_ranges = line_tracker.get_true_lines(after.clone());
+            let true_ranges = line_tracker.get_current_lines(after.clone());
             for r in true_ranges {
                 self.assign(r, id);
             }
