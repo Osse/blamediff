@@ -144,6 +144,22 @@ impl LineTracker {
                 }
             }
         }
+
+        // self.check();
+    }
+
+    fn check(&self) {
+        let v = self
+            .0
+            .iter()
+            .filter(|m| !matches!(m, Mapping::Gone))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            v.windows(2)
+                .all(|w| w[0].inner().unwrap() < w[1].inner().unwrap()),
+            true,
+        );
     }
 }
 
