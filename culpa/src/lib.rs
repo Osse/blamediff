@@ -17,8 +17,8 @@ pub use blame::*;
 mod error;
 pub use error::*;
 
-mod line_tracking;
-mod sinks;
+pub mod line_tracking;
+pub mod sinks;
 
 /// A [`Result`](std::result::Result) alias where the `Err` case is [`error::Error`].
 pub type Result<T> = std::result::Result<T, error::Error>;
