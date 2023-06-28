@@ -156,7 +156,7 @@ impl LineTracker {
 
 impl std::fmt::Debug for LineTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LineMapping")
+        f.debug_struct("LineTracker")
             .field("length", &self.0.len())
             .field("map", &self.0)
             .finish()
