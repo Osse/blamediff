@@ -45,7 +45,7 @@ impl Mapping {
 /// A LineMapping is map from actual line number in the blamed file to the line
 /// number in a previous version.
 #[derive(Clone, Default, Eq, PartialEq)]
-pub struct LineTracker(Vec<Mapping>);
+pub struct LineTracker(BTreeMap<u32, u32>);
 
 impl LineTracker {
     // pub fn from_vec(v: Vec<u32>) -> Self {
@@ -53,7 +53,7 @@ impl LineTracker {
     // }
 
     pub fn from_range(r: Range<u32>) -> Self {
-        Self(r.map(|i| Mapping::Identity(i)).collect())
+        Self(BTreeMap::from_iter(r.map(|i| (i, i))))
     }
 
     pub fn get_current_lines(&self, old_lines: Range<u32>) -> Vec<Range<u32>> {
@@ -74,11 +74,9 @@ impl LineTracker {
     }
 
     pub fn get_current_line(&self, old_line: u32) -> Option<u32> {
-        for (current_line, mapped_line) in self.0.iter().enumerate() {
-            if mapped_line == &Mapping::Shifted(old_line)
-                || mapped_line == &Mapping::Identity(old_line)
-            {
-                return Some(current_line as u32);
+        for (current_line, mapped_line) in self.0.iter() {
+            if *mapped_line == old_line {
+                return Some(*current_line);
             }
         }
 
@@ -86,73 +84,54 @@ impl LineTracker {
     }
 
     pub fn get_old_line(&self, current_line: u32) -> Option<u32> {
-        match self.0.get(current_line as usize) {
-            Some(m) => match m {
-                Mapping::Identity(i) => Some(*i),
-                Mapping::Shifted(s) => Some(*s),
-                Mapping::Gone(g) => None,
-            },
-            None => None,
-        }
+        self.0.get(&current_line).copied()
     }
 
     pub fn update_mapping(&mut self, before_after: Vec<(Range<u32>, Range<u32>)>) {
         // As part of transforming this line tracker into the next one, mark all
         // lines in the after ranges Gone.
         for (_before, after) in &before_after {
-            for m in self
-                .0
-                .iter_mut()
-                .filter(|m| after.contains(&m.inner().unwrap()))
-            {
-                *m = Mapping::Gone(m.inner().unwrap());
-            }
+            self.0.retain(|_k, v| !after.contains(v));
         }
 
         // Collect all positions first. Otherwise the first pair of before-after
         // will shift the next pair down
         let positions = before_after
             .iter()
-            .map(|(_before, after)| {
-                self.0.partition_point(|m| match m {
-                    Mapping::Identity(i) | Mapping::Shifted(i) => *i < after.end,
-                    Mapping::Gone(g) => *g < after.end, // Why not always true here
-                                                        // Mapping::Gone(g) => true,
-                })
+            .filter_map(|(_before, after)| {
+                self.0
+                    .iter()
+                    .find_map(|(k, &v)| if v >= after.end { Some(*k) } else { None })
             })
             .collect::<Vec<_>>();
 
-        for ((before, after), pos) in before_after.iter().zip(positions) {
+        dbg!(&positions);
+
+        // assert_eq!(
+        //     positions.len(),
+        //     before_after.len(),
+        //     "We find one position for each after range"
+        // );
+
+        for ((before, after), key) in before_after.iter().zip(positions) {
             let alen = after.len();
             let blen = before.len();
 
-            if alen > blen {
-                let offset = alen - blen;
+            dbg!(alen, blen);
 
-                for v in &mut self.0[pos..] {
-                    *v = match v {
-                        Mapping::Identity(i) => Mapping::Shifted(*i - offset as u32),
-                        Mapping::Shifted(s) => Mapping::Shifted(*s - offset as u32),
-                        Mapping::Gone(g) => Mapping::Gone(*g - offset as u32),
-                    };
-                }
-            } else if blen > alen {
-                let offset = blen - alen;
+            if alen != blen {
+                let offset = if alen > blen {
+                    alen - blen
+                } else {
+                    blen - alen
+                };
 
-                for v in &mut self.0[pos..] {
-                    *v = match v {
-                        Mapping::Identity(i) => Mapping::Shifted(*i + offset as u32),
-                        Mapping::Shifted(s) => Mapping::Shifted(*s + offset as u32),
-                        Mapping::Gone(g) => Mapping::Gone(*g + offset as u32),
-                    };
-                }
-            }
-        }
-
-        for (index, m) in self.0.iter_mut().enumerate() {
-            if let Mapping::Shifted(s) = m {
-                if *s == index as u32 {
-                    *m = Mapping::Identity(*s);
+                for (_k, v) in self.0.range_mut(key..) {
+                    if alen > blen {
+                        *v -= offset as u32;
+                    } else {
+                        *v += offset as u32;
+                    }
                 }
             }
         }
@@ -160,27 +139,26 @@ impl LineTracker {
         // self.check();
     }
 
-    fn check(&self) {
-        let v = self
-            .0
-            .iter()
-            .filter(|m| !matches!(m, Mapping::Gone(_)))
-            .collect::<Vec<_>>();
+    // fn check(&self) {
+    //     let v = self
+    //         .0
+    //         .iter()
+    //         .filter(|m| !matches!(m, Mapping::Gone(_)))
+    //         .collect::<Vec<_>>();
 
-        assert_eq!(
-            v.windows(2)
-                .all(|w| w[0].inner().unwrap() < w[1].inner().unwrap()),
-            true,
-        );
-    }
+    //     assert_eq!(
+    //         v.windows(2)
+    //             .all(|w| w[0].inner().unwrap() < w[1].inner().unwrap()),
+    //         true,
+    //     );
+    // }
 }
 
 impl std::fmt::Debug for LineTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let m = BTreeMap::from_iter(self.0.iter().enumerate());
         f.debug_struct("LineMapping")
             .field("length", &self.0.len())
-            .field("map", &m)
+            .field("map", &self.0)
             .finish()
     }
 }
