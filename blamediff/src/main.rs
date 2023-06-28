@@ -274,13 +274,15 @@ fn diff_two_blobs(
         path,
     };
 
+    let t = culpa::line_tracking::LineTracker::from_range(0..new_file.lines().count() as u32);
+
     let diff = diff::blob::diff(
         diff::blob::Algorithm::Histogram,
         &input,
-        UnifiedDiffBuilder::new(&input, old, new),
+        culpa::sinks::RangeAndLineCollector::new(&input, t),
     );
 
-    print!("{}", diff);
+    print!("{:#?}", diff);
 
     Ok(())
 }
