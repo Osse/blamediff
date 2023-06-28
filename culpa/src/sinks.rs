@@ -1,5 +1,5 @@
 use gix::diff::blob::{intern::*, Sink};
-use std::{collections::HashMap, ops::Range};
+use std::{collections::BTreeMap, ops::Range};
 
 use crate::line_tracking::LineTracker;
 
@@ -16,8 +16,8 @@ where
     T: std::hash::Hash + std::cmp::Eq + std::fmt::Display + ToString,
 {
     ranges: Vec<BeforeAfter>,
-    old_lines: HashMap<u32, String>,
-    new_lines: HashMap<u32, String>,
+    old_lines: BTreeMap<u32, String>,
+    new_lines: BTreeMap<u32, String>,
 
     line_mapping: LineTracker,
 
@@ -31,8 +31,8 @@ where
     pub fn new(interner: &'a InternedInput<T>, line_mapping: LineTracker) -> Self {
         Self {
             ranges: vec![],
-            old_lines: HashMap::new(),
-            new_lines: HashMap::new(),
+            old_lines: BTreeMap::new(),
+            new_lines: BTreeMap::new(),
             line_mapping,
             interner,
         }
@@ -53,8 +53,8 @@ where
 #[derive(Debug, Default)]
 pub struct Changes {
     pub ranges: Vec<BeforeAfter>,
-    pub old_lines: HashMap<u32, String>,
-    pub new_lines: HashMap<u32, String>,
+    pub old_lines: BTreeMap<u32, String>,
+    pub new_lines: BTreeMap<u32, String>,
     pub line_tracker: LineTracker,
 }
 
