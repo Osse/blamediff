@@ -51,6 +51,14 @@ struct TestArgs {
     args: Vec<String>,
 }
 
+#[derive(Args)]
+struct LogArgs {
+    #[arg(short, long)]
+    first_parent: bool,
+
+    revision: String,
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -63,6 +71,7 @@ enum Command {
     Diff(DiffArgs),
     Blame(BlameArgs),
     Test(TestArgs),
+    Log(LogArgs),
 }
 
 fn get_object(
@@ -87,6 +96,7 @@ fn main() -> anyhow::Result<()> {
         Command::Diff(da) => cmd_diff(da),
         Command::Blame(ba) => cmd_blame(ba),
         Command::Test(ta) => cmd_test(ta),
+        Command::Log(la) => cmd_log(la),
     }
 }
 
@@ -435,6 +445,41 @@ fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
         if c.parent_ids.len() > 1 {
             println!("|\\");
         }
+    }
+
+    Ok(())
+}
+
+fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
+    let repo = discover(".")?;
+    let revision = la.revision.as_str();
+
+    let range = repo.rev_parse(revision)?.detach();
+
+    use gix::revision::plumbing::Spec;
+    let (start, end) = match range {
+        Spec::Include(oid) => (repo.find_object(oid)?, None),
+        Spec::Exclude(oid) => (repo.rev_parse_single("HEAD")?.object()?, Some(oid)),
+        Spec::Range { from, to } => (repo.find_object(to)?, Some(from)),
+        _ => return Err(anyhow::anyhow!("Invalid range")),
+    };
+
+    let rev_walker = {
+        let r = repo
+            .rev_walk(std::iter::once(start.id()))
+            .use_commit_graph(true)
+            .sorting(gix::traverse::commit::Sorting::BreadthFirst);
+
+        if la.first_parent {
+            r.first_parent_only()
+        } else {
+            r
+        }
+    }
+    .all()?;
+
+    for c in rev_walker {
+        dbg!(c?.id);
     }
 
     Ok(())

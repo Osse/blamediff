@@ -3,6 +3,7 @@ pub enum BlameDiffError {
     FindObject(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
     StrUtf8Error(std::str::Utf8Error),
     ParseSingle(gix::revision::spec::parse::single::Error),
+    InvalidRange,
 }
 
 impl std::fmt::Display for BlameDiffError {
