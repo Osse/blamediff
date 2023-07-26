@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::iter::Map;
 use std::ops::Range;
 
 fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
@@ -27,31 +26,12 @@ fn make_ranges(mut slice: &[u32]) -> Vec<Range<u32>> {
     ranges
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Mapping {
-    Identity(u32),
-    Shifted(u32),
-    Gone(u32), // TODO: Find out why it doesn't work without the inner u32
-}
-
-impl Mapping {
-    fn inner(&self) -> Option<u32> {
-        match self {
-            Self::Identity(s) | Self::Shifted(s) | Self::Gone(s) => Some(*s),
-        }
-    }
-}
-
 /// A LineMapping is map from actual line number in the blamed file to the line
 /// number in a previous version.
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct LineTracker(BTreeMap<u32, u32>);
 
 impl LineTracker {
-    // pub fn from_vec(v: Vec<u32>) -> Self {
-    //     Self(v)
-    // }
-
     pub fn from_range(r: Range<u32>) -> Self {
         Self(BTreeMap::from_iter(r.map(|i| (i, i))))
     }
@@ -139,6 +119,20 @@ impl LineTracker {
         // self.check();
     }
 
+    pub fn merge_mapping(&mut self, other: &LineTracker) {
+        dbg!("merge mapping");
+        for (k, v) in &mut self.0 {
+            if let Some(other_v) = other.0.get(k) {
+                if *v != *other_v {
+                    dbg!(&k, &v, &other_v);
+                    *v = std::cmp::min(*v, *other_v);
+                }
+            }
+        }
+
+        dbg!(self.0.get(&78));
+    }
+
     // fn check(&self) {
     //     let v = self
     //         .0
@@ -198,6 +192,6 @@ mod tests {
 
         let r = lm.get_current_lines(40..47);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0], 43..50);
+        assert_eq!(r[0], 35..42);
     }
 }

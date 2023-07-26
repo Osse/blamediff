@@ -4,6 +4,7 @@
 
 mod diffprinter;
 
+use std::cmp::Reverse;
 // use std::borrow::{Borrow, BorrowMut};
 use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::default;
@@ -369,7 +370,7 @@ fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
         state,
         |oid: &gix::oid, buf: &mut Vec<u8>| repo.objects.find_commit_iter(oid, buf),
     )
-    .sorting(Sorting::BreadthFirst)?;
+    .sorting(Sorting::ByCommitTimeNewestFirst)?;
 
     for (c, chain) in ancestors.map(|c| {
         let commit = c.unwrap();
@@ -429,7 +430,7 @@ fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
             }
         };
 
-        dbg!(&commit, &merges);
+        // dbg!(&commit, &merges);
 
         (commit, chain)
     }) {
@@ -467,7 +468,6 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     let rev_walker = {
         let r = repo
             .rev_walk(std::iter::once(start.id()))
-            .use_commit_graph(true)
             .sorting(gix::traverse::commit::Sorting::BreadthFirst);
 
         if la.first_parent {
@@ -478,8 +478,23 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     }
     .all()?;
 
-    for c in rev_walker {
-        dbg!(c?.id);
+    let graph = repo.commit_graph()?;
+
+    let mut history = rev_walker
+        .into_iter()
+        .map(Result::unwrap)
+        .map(|c| {
+            let id = c.id.clone();
+            (c, graph.commit_by_id(&id).unwrap())
+        })
+        .collect::<Vec<_>>();
+
+    history.sort_by(|lhs, rhs| lhs.1.generation().cmp(&rhs.1.generation()));
+    history.reverse();
+
+    for (c, _g) in history {
+        println!("* {}", c.id);
+        // dbg!(graph.commit_by_id(&c.id));
     }
 
     Ok(())

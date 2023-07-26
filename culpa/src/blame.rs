@@ -155,6 +155,7 @@ impl IncompleteBlame {
         self.raw_assign(self.total_range.clone(), true, id);
 
         let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
+        dbg!(&line_tracker);
         // First remove anything that has already been assigned to this id
         // because it would have been assigned with boundary = false
 
@@ -267,7 +268,7 @@ pub fn blame_file(
     let rev_walker = {
         let r = repo
             .rev_walk(std::iter::once(start.id()))
-            .sorting(gix::traverse::commit::Sorting::ByCommitTimeNewestFirst);
+            .sorting(gix::traverse::commit::Sorting::BreadthFirst);
 
         if first_parent {
             r.first_parent_only()
@@ -295,12 +296,14 @@ pub fn blame_file(
     }
     .collect::<std::result::Result<Vec<_>, _>>()
     .expect("Able to collect all history");
+    dbg!(&commits);
 
     for commit_info in &commits {
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
 
         let line_tracker = blame_state.line_trackers.get(&commit).unwrap().clone();
+        dbg!(commit_info.id, &line_tracker);
 
         match commit_info.parent_ids.len() {
             0 => {
@@ -316,11 +319,15 @@ pub fn blame_file(
                         let changes = diff_tree_entries(p_e, e.to_owned(), line_tracker.clone())?;
                         blame_state.process(&changes.ranges, commit);
 
-                        if !blame_state.line_trackers.contains_key(&prev_commit) {
-                            blame_state
-                                .line_trackers
-                                .insert(prev_commit, changes.line_tracker.clone());
-                        }
+                        match blame_state.line_trackers.entry(prev_commit) {
+                            std::collections::hash_map::Entry::Occupied(mut o) => {
+                                dbg!("merging", prev_commit);
+                                o.get_mut().merge_mapping(&changes.line_tracker);
+                            }
+                            std::collections::hash_map::Entry::Vacant(v) => {
+                                v.insert(changes.line_tracker.clone());
+                            }
+                        };
                     }
                     (Some(_e), Some(_p_e)) => {
                         // The two files are identical
@@ -351,9 +358,14 @@ pub fn blame_file(
                             let changes =
                                 diff_tree_entries(p_e, e.to_owned(), line_tracker.clone())?;
 
-                            blame_state
-                                .line_trackers
-                                .insert(*prev_commit, changes.line_tracker.clone());
+                            match blame_state.line_trackers.entry(*prev_commit) {
+                                std::collections::hash_map::Entry::Occupied(mut o) => {
+                                    o.get_mut().merge_mapping(&changes.line_tracker);
+                                }
+                                std::collections::hash_map::Entry::Vacant(v) => {
+                                    v.insert(changes.line_tracker.clone());
+                                }
+                            };
 
                             merge_changes.push(changes);
                         }
