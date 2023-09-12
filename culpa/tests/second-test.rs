@@ -116,7 +116,7 @@ blame_test!(t11_06_4d8a3c7_f7a3a57, "4d8a3c7..f7a3a57");
 blame_test!(t11_07_2064b3c_f7a3a57, "2064b3c..f7a3a57");
 blame_test!(t11_08_0e17ccb_f7a3a57, "0e17ccb..f7a3a57");
 blame_test!(t11_09_3be8265_f7a3a57, "3be8265..f7a3a57");
-// blame_test!(t11_10_8bf8780_f7a3a57, "8bf8780..f7a3a57");
+blame_test!(t11_10_8bf8780_f7a3a57, "8bf8780..f7a3a57");
 
 // 392db1b: Add a lot and blank lines
 blame_test!(t12_392db1b, "392db1b");
@@ -129,8 +129,8 @@ blame_test!(t12_06_4d8a3c7_392db1b, "4d8a3c7..392db1b");
 blame_test!(t12_07_2064b3c_392db1b, "2064b3c..392db1b");
 blame_test!(t12_08_0e17ccb_392db1b, "0e17ccb..392db1b");
 blame_test!(t12_09_3be8265_392db1b, "3be8265..392db1b");
-// blame_test!(t12_10_8bf8780_392db1b, "8bf8780..392db1b");
-// blame_test!(t12_11_f7a3a57_392db1b, "f7a3a57..392db1b");
+blame_test!(t12_10_8bf8780_392db1b, "8bf8780..392db1b");
+blame_test!(t12_11_f7a3a57_392db1b, "f7a3a57..392db1b");
 
 // bb48275: Side project
 blame_test!(t13_bb48275, "bb48275");
@@ -143,9 +143,9 @@ blame_test!(t13_06_4d8a3c7_bb48275, "4d8a3c7..bb48275");
 blame_test!(t13_07_2064b3c_bb48275, "2064b3c..bb48275");
 blame_test!(t13_08_0e17ccb_bb48275, "0e17ccb..bb48275");
 blame_test!(t13_09_3be8265_bb48275, "3be8265..bb48275");
-// blame_test!(t13_10_8bf8780_bb48275, "8bf8780..bb48275");
-// blame_test!(t13_11_f7a3a57_bb48275, "f7a3a57..bb48275");
-// blame_test!(t13_12_392db1b_bb48275, "392db1b..bb48275");
+blame_test!(t13_10_8bf8780_bb48275, "8bf8780..bb48275");
+blame_test!(t13_11_f7a3a57_bb48275, "f7a3a57..bb48275");
+blame_test!(t13_12_392db1b_bb48275, "392db1b..bb48275");
 
 // c57fe89: Merge branch 'kek' into HEAD
 blame_test!(t14_c57fe89, "c57fe89");
@@ -158,10 +158,10 @@ blame_test!(t14_06_4d8a3c7_c57fe89, "4d8a3c7..c57fe89");
 blame_test!(t14_07_2064b3c_c57fe89, "2064b3c..c57fe89");
 blame_test!(t14_08_0e17ccb_c57fe89, "0e17ccb..c57fe89");
 blame_test!(t14_09_3be8265_c57fe89, "3be8265..c57fe89");
-// blame_test!(t14_10_8bf8780_c57fe89, "8bf8780..c57fe89");
-// blame_test!(t14_11_f7a3a57_c57fe89, "f7a3a57..c57fe89");
-// blame_test!(t14_12_392db1b_c57fe89, "392db1b..c57fe89");
-// blame_test!(t14_13_bb48275_c57fe89, "bb48275..c57fe89");
+blame_test!(t14_10_8bf8780_c57fe89, "8bf8780..c57fe89");
+blame_test!(t14_11_f7a3a57_c57fe89, "f7a3a57..c57fe89");
+blame_test!(t14_12_392db1b_c57fe89, "392db1b..c57fe89");
+blame_test!(t14_13_bb48275_c57fe89, "bb48275..c57fe89");
 
 // d7d6328: Multiple changes in one commit again
 blame_test!(t15_d7d6328, "d7d6328");
@@ -174,8 +174,8 @@ blame_test!(t15_06_4d8a3c7_d7d6328, "4d8a3c7..d7d6328");
 blame_test!(t15_07_2064b3c_d7d6328, "2064b3c..d7d6328");
 blame_test!(t15_08_0e17ccb_d7d6328, "0e17ccb..d7d6328");
 blame_test!(t15_09_3be8265_d7d6328, "3be8265..d7d6328");
-// blame_test!(t15_10_8bf8780_d7d6328, "8bf8780..d7d6328");
-// blame_test!(t15_11_f7a3a57_d7d6328, "f7a3a57..d7d6328");
-// blame_test!(t15_12_392db1b_d7d6328, "392db1b..d7d6328");
-// blame_test!(t15_13_bb48275_d7d6328, "bb48275..d7d6328");
+blame_test!(t15_10_8bf8780_d7d6328, "8bf8780..d7d6328");
+blame_test!(t15_11_f7a3a57_d7d6328, "f7a3a57..d7d6328");
+blame_test!(t15_12_392db1b_d7d6328, "392db1b..d7d6328");
+blame_test!(t15_13_bb48275_d7d6328, "bb48275..d7d6328");
 blame_test!(t15_14_c57fe89_d7d6328, "c57fe89..d7d6328");

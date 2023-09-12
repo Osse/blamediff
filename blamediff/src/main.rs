@@ -4,6 +4,7 @@
 
 mod diffprinter;
 
+use std::borrow::BorrowMut;
 use std::cmp::Reverse;
 // use std::borrow::{Borrow, BorrowMut};
 use std::collections::{hash_map::Entry, HashMap, HashSet};
@@ -24,6 +25,8 @@ use time::macros::format_description;
 
 mod error;
 use error::BlameDiffError;
+
+mod topo;
 
 mod log;
 
@@ -328,8 +331,6 @@ fn cmd_blame(ba: BlameArgs) -> anyhow::Result<()> {
 }
 
 use gix::traverse::commit::*;
-use std::cell::{RefCell, RefMut};
-use std::rc::Rc;
 
 struct MyState {
     inner: ancestors::State,
@@ -357,99 +358,103 @@ struct DescendedMerge {
 }
 
 fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
-    let repo = &gix::discover(".")?;
-    let head = repo.rev_parse_single(ta.args[0].as_str())?;
-
-    let state = ancestors::State::default();
-
-    let mut merges = HashMap::<gix::ObjectId, DescendedMerge>::new();
-    let mut seen = HashSet::<gix::ObjectId>::new();
-
-    let ancestors = Ancestors::new(
-        std::iter::once(head),
-        state,
-        |oid: &gix::oid, buf: &mut Vec<u8>| repo.objects.find_commit_iter(oid, buf),
-    )
-    .sorting(Sorting::ByCommitTimeNewestFirst)?;
-
-    for (c, chain) in ancestors.map(|c| {
-        let commit = c.unwrap();
-        seen.insert(commit.id);
-
-        let total = commit.parent_ids.len();
-
-        if total > 1 {
-            // This is a merge commit. Start tracking it.
-            for (i, parent) in commit.parent_ids.iter().enumerate() {
-                merges.insert(
-                    *parent,
-                    DescendedMerge {
-                        chain: i,
-                        info: commit.clone(),
-                        total,
-                    },
-                );
-            }
-        }
-
-        let chain = match merges.entry(commit.id) {
-            Entry::Occupied(e) => {
-                // This commit is an ancestor of a merge we know about
-                let (_, descended_merge) = e.remove_entry();
-
-                let mut chain = Some(descended_merge.chain);
-
-                if commit.parent_ids.len() > 0 {
-                    let pid = *commit.parent_ids.first().unwrap();
-
-                    if pid == descended_merge.info.id {
-                        chain = None;
-                    }
-
-                    if merges.contains_key(&pid) {
-                        chain = None;
-                    } else {
-                        // Update to indicate that this commit's parent is now
-                        // know to be an ancestor of a merge we know about
-                        merges.insert(
-                            pid,
-                            DescendedMerge {
-                                chain: descended_merge.chain,
-                                info: descended_merge.info,
-                                total: descended_merge.total,
-                            },
-                        );
-                    }
-                }
-
-                chain
-            }
-            Entry::Vacant(_) => {
-                // This commit is not an ancestor of a merge commit we know about so there is no chain
-                None
-            }
-        };
-
-        // dbg!(&commit, &merges);
-
-        (commit, chain)
-    }) {
-        if let Some(chain) = chain {
-            if chain == 0 {
-                println!("* | {}", c.id);
-            } else {
-                println!("| * {}", c.id);
-            }
-        } else {
-            println!("* {}", c.id);
-        }
-        if c.parent_ids.len() > 1 {
-            println!("|\\");
-        }
-    }
-
     Ok(())
 }
+
+// fn cmd_test(ta: TestArgs) -> anyhow::Result<()> {
+//     let repo = &gix::discover(".")?;
+//     let head = repo.rev_parse_single(ta.args[0].as_str())?;
+
+//     let state = ancestors::State::default();
+
+//     let mut merges = HashMap::<gix::ObjectId, DescendedMerge>::new();
+//     let mut seen = HashSet::<gix::ObjectId>::new();
+
+//     let ancestors = Ancestors::new(
+//         std::iter::once(head),
+//         state,
+//         |oid: &gix::oid, buf: &mut Vec<u8>| repo.objects.find_commit_iter(oid, buf),
+//     )
+//     .sorting(Sorting::ByCommitTimeNewestFirst)?;
+
+//     for (c, chain) in ancestors.map(|c| {
+//         let commit = c.unwrap();
+//         seen.insert(commit.id);
+
+//         let total = commit.parent_ids.len();
+
+//         if total > 1 {
+//             // This is a merge commit. Start tracking it.
+//             for (i, parent) in commit.parent_ids.iter().enumerate() {
+//                 merges.insert(
+//                     *parent,
+//                     DescendedMerge {
+//                         chain: i,
+//                         info: commit.clone(),
+//                         total,
+//                     },
+//                 );
+//             }
+//         }
+
+//         let chain = match merges.entry(commit.id) {
+//             Entry::Occupied(e) => {
+//                 // This commit is an ancestor of a merge we know about
+//                 let (_, descended_merge) = e.remove_entry();
+
+//                 let mut chain = Some(descended_merge.chain);
+
+//                 if commit.parent_ids.len() > 0 {
+//                     let pid = *commit.parent_ids.first().unwrap();
+
+//                     if pid == descended_merge.info.id {
+//                         chain = None;
+//                     }
+
+//                     if merges.contains_key(&pid) {
+//                         chain = None;
+//                     } else {
+//                         // Update to indicate that this commit's parent is now
+//                         // know to be an ancestor of a merge we know about
+//                         merges.insert(
+//                             pid,
+//                             DescendedMerge {
+//                                 chain: descended_merge.chain,
+//                                 info: descended_merge.info,
+//                                 total: descended_merge.total,
+//                             },
+//                         );
+//                     }
+//                 }
+
+//                 chain
+//             }
+//             Entry::Vacant(_) => {
+//                 // This commit is not an ancestor of a merge commit we know about so there is no chain
+//                 None
+//             }
+//         };
+
+//         // dbg!(&commit, &merges);
+
+//         (commit, chain)
+//     }) {
+//         if let Some(chain) = chain {
+//             if chain == 0 {
+//                 println!("* | {}", c.id);
+//             } else {
+//                 println!("| * {}", c.id);
+//             }
+//         } else {
+//             println!("* {}", c.id);
+//         }
+//         if c.parent_ids.len() > 1 {
+//             println!("|\\");
+//         }
+//     }
+
+//     Ok(())
+// }
 
 fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     let repo = discover(".")?;
@@ -459,15 +464,15 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
 
     use gix::revision::plumbing::Spec;
     let (start, end) = match range {
-        Spec::Include(oid) => (repo.find_object(oid)?, None),
-        Spec::Exclude(oid) => (repo.rev_parse_single("HEAD")?.object()?, Some(oid)),
-        Spec::Range { from, to } => (repo.find_object(to)?, Some(from)),
+        Spec::Include(oid) => (repo.find_object(oid)?.id, None),
+        Spec::Exclude(oid) => (repo.rev_parse_single("HEAD")?.object()?.id, Some(oid)),
+        Spec::Range { from, to } => (to, Some(from)),
         _ => return Err(anyhow::anyhow!("Invalid range")),
     };
 
     let rev_walker = {
         let r = repo
-            .rev_walk(std::iter::once(start.id()))
+            .rev_walk(std::iter::once(start))
             .sorting(gix::traverse::commit::Sorting::BreadthFirst);
 
         if la.first_parent {
@@ -478,23 +483,63 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     }
     .all()?;
 
-    let graph = repo.commit_graph()?;
+    let commit_graph = repo.commit_graph()?;
 
-    let mut history = rev_walker
-        .into_iter()
-        .map(Result::unwrap)
-        .map(|c| {
-            let id = c.id.clone();
-            (c, graph.commit_by_id(&id).unwrap())
+    let history: Result<Vec<_>, _> = rev_walker.into_iter().collect();
+    let history = history?;
+
+    // TODO: rev_walker.map_while() directly instead of collecting everything into a Vec
+
+    // Collect commits that don't have any generation numbers. As soon as a gen
+    // number is found we know all subsequent (ie. earlier in history) have.
+    let missing_gens: Vec<_> = history
+        .iter()
+        .map_while(|h| {
+            if commit_graph.lookup(h.id).is_none() {
+                Some(h)
+            } else {
+                None
+            }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    history.sort_by(|lhs, rhs| lhs.1.generation().cmp(&rhs.1.generation()));
-    history.reverse();
+    let mut my_gen_numbers = HashMap::<gix::ObjectId, u32>::new();
 
-    for (c, _g) in history {
-        println!("* {}", c.id);
-        // dbg!(graph.commit_by_id(&c.id));
+    // Walk in reverse
+    for h in missing_gens.into_iter().rev() {
+        // A commit's generation number is m + 1 where m is the maximum generation number of its parents
+        let gen = h
+            .parent_ids()
+            .map(|pid| {
+                // Get gen number either from the commit graph or a value previously calculated in my_gen_numbers
+                commit_graph.commit_by_id(&pid).map_or_else(
+                    || {
+                        *my_gen_numbers
+                            .get(&pid.detach())
+                            .expect("have gen number inserted")
+                    },
+                    |o| o.generation(),
+                )
+            })
+            .max()
+            .unwrap_or(0)
+            + 1;
+
+        if my_gen_numbers.insert(h.id, gen).is_some() {
+            panic!("was already there");
+        }
+    }
+
+    // Copy rest of history numbers to avoid having to lookup two places:
+    for c in commit_graph.iter_commits() {
+        my_gen_numbers.insert(ObjectId::from(c.id()), c.generation());
+    }
+
+    let mut topo_walker = topo::TopoWalker::on_repo(&repo)?;
+    topo_walker.add_tip(start);
+
+    for c in topo_walker {
+        println!("{}", c.to_hex());
     }
 
     Ok(())

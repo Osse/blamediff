@@ -11,7 +11,9 @@ description = "Program using culpa to blame files and diffs"
 
 [dependencies]
 gix = "0.46"
+gix-revision = "*"
 clap = { version = "4.2", features = ["derive"] }
 culpa = { path = "../culpa" }
 anyhow = "1"
 time = "0.3"
+flagset = "0.4.4"
