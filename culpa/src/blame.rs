@@ -210,9 +210,10 @@ fn tree_entry(
     id: impl Into<ObjectId>,
     path: impl AsRef<Path>,
 ) -> Result<Option<object::tree::Entry>> {
+    let mut v = Vec::<u8>::new();
     repo.find_object(id)?
         .peel_to_tree()?
-        .lookup_entry_by_path(path)
+        .lookup_entry_by_path(path, &mut v)
         .map_err(|e| e.into())
 }
 
@@ -277,10 +278,11 @@ pub fn blame_file(
         }
     };
 
+    let mut buf = Vec::<u8>::new();
     let start_id = start.id;
     let blob = start
         .peel_to_tree()?
-        .lookup_entry_by_path(path)?
+        .lookup_entry_by_path(path, &mut buf)?
         .ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))?
         .object()?
         .peel_to_kind(object::Kind::Blob)?;

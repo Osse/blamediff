@@ -16,6 +16,9 @@ pub fn log(paths: &[std::path::PathBuf]) {
         .unwrap()
         .peekable();
 
+    let mut buf = Vec::<u8>::new();
+    let mut buff = Vec::<u8>::new();
+
     while let Some(c_id) = iter.next() {
         let c_id = c_id.unwrap().id;
 
@@ -26,7 +29,11 @@ pub fn log(paths: &[std::path::PathBuf]) {
             .unwrap()
             .into_commit();
 
-        let e = c.tree().unwrap().lookup_entry_by_path(path).unwrap();
+        let e = c
+            .tree()
+            .unwrap()
+            .lookup_entry_by_path(path, &mut buf)
+            .unwrap();
 
         if let Some(e) = e {
             if let Some(aa) = iter.peek() {
@@ -39,7 +46,11 @@ pub fn log(paths: &[std::path::PathBuf]) {
                     .unwrap()
                     .into_commit();
 
-                let ee = cc.tree().unwrap().lookup_entry_by_path(path).unwrap();
+                let ee = cc
+                    .tree()
+                    .unwrap()
+                    .lookup_entry_by_path(path, &mut buff)
+                    .unwrap();
 
                 if let Some(ee) = ee {
                     if e.object_id() != ee.object_id() {

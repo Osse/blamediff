@@ -5,7 +5,7 @@ pub enum Error {
     InvalidRange,
     NotFound(std::io::Error),
     PeelError(gix::object::peel::to_kind::Error),
-    FindObject(gix::odb::find::existing::Error<gix::odb::store::find::Error>),
+    FindObject(gix::odb::find::existing::Error),
     SystemTime(std::time::SystemTimeError),
     ParseSingle(gix::revision::spec::parse::single::Error),
     Parse(gix::revision::spec::parse::Error),
@@ -44,10 +44,7 @@ macro_rules! make_error {
 make_error![std::time::SystemTimeError, SystemTime];
 make_error![gix::revision::spec::parse::single::Error, ParseSingle];
 make_error![gix::revision::spec::parse::Error, Parse];
-make_error![
-    gix::odb::find::existing::Error<gix::odb::store::find::Error>,
-    FindObject
-];
+make_error![gix::odb::find::existing::Error, FindObject];
 make_error![gix::object::peel::to_kind::Error, PeelError];
 make_error![std::str::Utf8Error, StrUtf8Error];
 make_error![gix::revision::walk::Error, WalkError];

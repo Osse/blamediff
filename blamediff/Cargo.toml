@@ -10,7 +10,7 @@ description = "Program using culpa to blame files and diffs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gix = "0.46"
+gix = "0.54"
 gix-revision = "*"
 clap = { version = "4.2", features = ["derive"] }
 culpa = { path = "../culpa" }

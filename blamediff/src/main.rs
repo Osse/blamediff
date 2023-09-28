@@ -119,7 +119,10 @@ const DEV_NULL: BlobData = BlobData {
 fn cmd_diff(da: DiffArgs) -> anyhow::Result<()> {
     let repo = discover(".")?;
 
-    let prefix = repo.prefix().expect("have worktree")?;
+    let prefix = repo
+        .prefix()
+        .expect("have worktree")
+        .expect("have worktree");
 
     let owned_paths: Vec<bstr::BString> = da
         .paths

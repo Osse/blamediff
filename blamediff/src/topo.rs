@@ -1,6 +1,6 @@
+use gix::hashtable::{hash_map::Entry, HashMap};
 use std::cell::{RefCell, RefMut};
 use std::collections::BinaryHeap;
-use std::collections::{hash_map::Entry, HashMap};
 use std::rc::Rc;
 
 use flagset::{flags, FlagSet};
@@ -63,10 +63,10 @@ impl<'a> TopoWalker<'a> {
         let mut s = Self {
             repo,
             commit_graph: repo.commit_graph()?,
-            indegrees: HashMap::new(),
-            danks: HashMap::new(),
-            explore_queue: std::collections::BinaryHeap::new(),
-            indegree_queue: std::collections::BinaryHeap::new(),
+            indegrees: HashMap::default(),
+            danks: HashMap::default(),
+            explore_queue: BinaryHeap::new(),
+            indegree_queue: BinaryHeap::new(),
             topo_queue: vec![],
             min_gen: u32::MAX,
         };
