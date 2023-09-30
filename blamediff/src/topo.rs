@@ -17,24 +17,24 @@ flags! {
 }
 
 #[derive(Debug, Eq)]
-struct Dank {
+struct Item {
     id: gix::ObjectId,
     gen: u32,
     flags: RefCell<FlagSet<WalkFlags>>,
 }
 
-impl std::cmp::Ord for Dank {
+impl std::cmp::Ord for Item {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.gen.cmp(&other.gen)
     }
 }
-impl std::cmp::PartialOrd for Dank {
+impl std::cmp::PartialOrd for Item {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.gen.partial_cmp(&other.gen)
     }
 }
 
-impl std::cmp::PartialEq for Dank {
+impl std::cmp::PartialEq for Item {
     fn eq(&self, other: &Self) -> bool {
         self.gen == other.gen
     }
@@ -45,10 +45,10 @@ pub struct TopoWalker<'a> {
     repo: &'a gix::Repository,
     commit_graph: gix::commitgraph::Graph,
     indegrees: HashMap<gix::ObjectId, i32>,
-    danks: HashMap<gix::ObjectId, Rc<Dank>>,
-    explore_queue: BinaryHeap<Rc<Dank>>,
-    indegree_queue: BinaryHeap<Rc<Dank>>,
-    topo_queue: Vec<Rc<Dank>>,
+    items: HashMap<gix::ObjectId, Rc<Item>>,
+    explore_queue: BinaryHeap<Rc<Item>>,
+    indegree_queue: BinaryHeap<Rc<Item>>,
+    topo_queue: Vec<Rc<Item>>,
     min_gen: u32,
 }
 
@@ -60,11 +60,11 @@ impl<'a> TopoWalker<'a> {
     ) -> Result<Self, gix::commitgraph::init::Error> {
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
 
-        let mut s = Self {
+        let mut topo_walker = Self {
             repo,
             commit_graph: repo.commit_graph()?,
             indegrees: HashMap::default(),
-            danks: HashMap::default(),
+            items: HashMap::default(),
             explore_queue: BinaryHeap::new(),
             indegree_queue: BinaryHeap::new(),
             topo_queue: vec![],
@@ -72,37 +72,46 @@ impl<'a> TopoWalker<'a> {
         };
 
         for id in &tips {
-            *s.indegrees.entry(*id).or_default() = 1;
+            *topo_walker.indegrees.entry(*id).or_default() = 1;
 
-            let gen = s.commit_graph.commit_by_id(id).unwrap().generation();
+            let gen = topo_walker
+                .commit_graph
+                .commit_by_id(id)
+                .expect("able to find commit in graph")
+                .generation();
 
-            if gen < s.min_gen {
-                s.min_gen = gen;
+            if gen < topo_walker.min_gen {
+                topo_walker.min_gen = gen;
             }
 
-            let dank = Rc::new(Dank {
+            let item = Rc::new(Item {
                 id: *id,
                 gen,
                 flags: RefCell::new(WalkFlags::Explored | WalkFlags::InDegree),
             });
 
-            s.danks.insert(*id, dank.clone());
+            topo_walker.items.insert(*id, item.clone());
 
-            s.explore_queue.push(dank.clone());
-            s.indegree_queue.push(dank.clone());
+            topo_walker.explore_queue.push(item.clone());
+            topo_walker.indegree_queue.push(item.clone());
         }
 
-        s.compute_indegree_to_depth(s.min_gen);
+        topo_walker.compute_indegree_to_depth(topo_walker.min_gen);
 
         for id in &tips {
-            if *s.indegrees.get(id).unwrap() == 1 {
-                s.topo_queue.push(s.danks[id].clone());
+            let i = *topo_walker
+                .indegrees
+                .get(id)
+                .expect("indegree already calculated");
+
+            if i == 1 {
+                topo_walker.topo_queue.push(topo_walker.items[id].clone());
             }
         }
 
-        s.topo_queue.reverse();
+        topo_walker.topo_queue.reverse();
 
-        Ok(s)
+        Ok(topo_walker)
     }
 
     fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) {
@@ -129,11 +138,11 @@ impl<'a> TopoWalker<'a> {
                     .and_modify(|e| *e += 1)
                     .or_insert(2);
 
-                let dank = &self.danks[&pid];
+                let item = &self.items[&pid];
 
-                if !dank.flags.borrow().contains(WalkFlags::InDegree) {
-                    *dank.flags.borrow_mut() |= WalkFlags::InDegree;
-                    self.indegree_queue.push(dank.clone());
+                if !item.flags.borrow().contains(WalkFlags::InDegree) {
+                    *item.flags.borrow_mut() |= WalkFlags::InDegree;
+                    self.indegree_queue.push(item.clone());
                 }
             }
         }
@@ -156,17 +165,20 @@ impl<'a> TopoWalker<'a> {
             let commit = self.commit_graph.commit_by_id(c.id).expect("find");
             for p in commit.iter_parents() {
                 let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
-                let dank = self.danks.get(parent_commit.id()).unwrap();
+                let item = self
+                    .items
+                    .get(parent_commit.id())
+                    .expect("item already added");
 
-                if !dank.flags.borrow().contains(WalkFlags::Explored) {
-                    *dank.flags.borrow_mut() |= WalkFlags::Explored;
-                    self.explore_queue.push(dank.clone());
+                if !item.flags.borrow().contains(WalkFlags::Explored) {
+                    *item.flags.borrow_mut() |= WalkFlags::Explored;
+                    self.explore_queue.push(item.clone());
                 }
             }
         }
     }
 
-    fn expand_topo_walk(&mut self, d: Rc<Dank>) {
+    fn expand_topo_walk(&mut self, d: Rc<Item>) {
         let parents = self
             .commit_graph
             .commit_by_id(d.id)
@@ -186,17 +198,21 @@ impl<'a> TopoWalker<'a> {
                 self.compute_indegree_to_depth(self.min_gen);
             }
 
-            let i = self.indegrees.get_mut(&pid).unwrap();
+            let i = self
+                .indegrees
+                .get_mut(&pid)
+                .expect("indegree already calculated");
+
             *i -= 1;
 
             if *i == 1 {
-                let pd = self.danks.get(&pid).expect("dank already added");
+                let pd = self.items.get(&pid).expect("item already added");
                 self.topo_queue.push(pd.clone());
             }
         }
     }
 
-    fn process_parents(&mut self, c: Rc<Dank>) {
+    fn process_parents(&mut self, c: Rc<Item>) {
         if c.flags.borrow().contains(WalkFlags::Added) {
             return;
         }
@@ -211,12 +227,12 @@ impl<'a> TopoWalker<'a> {
 
                 let pid = gix::ObjectId::from(parent_commit.id());
 
-                match self.danks.entry(pid) {
+                match self.items.entry(pid) {
                     Entry::Occupied(o) => {
                         *o.get().flags.borrow_mut() |= pass_flags;
                     }
                     Entry::Vacant(v) => {
-                        v.insert(Rc::new(Dank {
+                        v.insert(Rc::new(Item {
                             id: pid,
                             gen: parent_commit.generation(),
                             flags: RefCell::new(pass_flags),
@@ -234,7 +250,10 @@ impl<'a> Iterator for TopoWalker<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let c = self.topo_queue.pop()?;
 
-        let i = self.indegrees.get_mut(&c.id).unwrap();
+        let i = self
+            .indegrees
+            .get_mut(&c.id)
+            .expect("indegree already calculated");
         *i = 0;
 
         self.expand_topo_walk(c.clone());
