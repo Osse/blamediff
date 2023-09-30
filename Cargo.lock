@@ -123,6 +123,7 @@ dependencies = [
  "flagset",
  "gix",
  "gix-revision 0.15.2",
+ "pretty_assertions",
  "time",
 ]
 

@@ -46,6 +46,7 @@ pub enum Error {
     MissingItem,
     CommitNotFound,
     CommitGraphInit(gix::commitgraph::init::Error),
+    CommitGraphFile(gix::commitgraph::file::commit::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -55,6 +56,7 @@ impl std::fmt::Display for Error {
             Error::MissingItem => write!(f, "Internal item not added"),
             Error::CommitNotFound => write!(f, "Commit not found in commit graph"),
             Error::CommitGraphInit(e) => write!(f, "Error initializing graph: {}", e),
+            Error::CommitGraphFile(e) => write!(f, "Error doing file stuff: {}", e),
         }
     }
 }
@@ -71,6 +73,7 @@ macro_rules! make_error {
     };
 }
 make_error![gix::commitgraph::init::Error, CommitGraphInit];
+make_error![gix::commitgraph::file::commit::Error, CommitGraphFile];
 
 /// a walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker<'a> {
@@ -92,28 +95,24 @@ impl<'a> TopoWalker<'a> {
     ) -> Result<Self, Error> {
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
 
-        let mut topo_walker = Self {
-            repo,
-            commit_graph: repo.commit_graph()?,
-            indegrees: HashMap::default(),
-            items: HashMap::default(),
-            explore_queue: BinaryHeap::new(),
-            indegree_queue: BinaryHeap::new(),
-            topo_queue: vec![],
-            min_gen: u32::MAX,
-        };
+        let mut indegrees = HashMap::default();
+        let mut items = HashMap::default();
+        let commit_graph = repo.commit_graph()?;
+
+        let mut explore_queue = BinaryHeap::new();
+        let mut indegree_queue = BinaryHeap::new();
+        let mut min_gen = u32::MAX;
 
         for id in &tips {
-            *topo_walker.indegrees.entry(*id).or_default() = 1;
+            *indegrees.entry(*id).or_default() = 1;
 
-            let gen = topo_walker
-                .commit_graph
+            let gen = commit_graph
                 .commit_by_id(id)
                 .ok_or(Error::CommitNotFound)?
                 .generation();
 
-            if gen < topo_walker.min_gen {
-                topo_walker.min_gen = gen;
+            if gen < min_gen {
+                min_gen = gen;
             }
 
             let item = Rc::new(Item {
@@ -122,38 +121,48 @@ impl<'a> TopoWalker<'a> {
                 flags: RefCell::new(WalkFlags::Explored | WalkFlags::InDegree),
             });
 
-            topo_walker.items.insert(*id, item.clone());
+            items.insert(*id, item.clone());
 
-            topo_walker.explore_queue.push(item.clone());
-            topo_walker.indegree_queue.push(item.clone());
+            explore_queue.push(item.clone());
+            indegree_queue.push(item.clone());
         }
 
-        topo_walker.compute_indegree_to_depth(topo_walker.min_gen);
+        let mut s = Self {
+            repo,
+            commit_graph,
+            indegrees,
+            items,
+            explore_queue,
+            indegree_queue,
+            topo_queue: vec![],
+            min_gen,
+        };
+
+        s.compute_indegree_to_depth(min_gen)?;
 
         for id in &tips {
-            let i = *topo_walker
-                .indegrees
-                .get(id)
-                .ok_or(Error::MissingIndegree)?;
+            let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             if i == 1 {
-                topo_walker.topo_queue.push(topo_walker.items[id].clone());
+                s.topo_queue.push(s.items[id].clone());
             }
         }
 
-        topo_walker.topo_queue.reverse();
+        s.topo_queue.reverse();
 
-        Ok(topo_walker)
+        Ok(s)
     }
 
-    fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) {
+    fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
         while let Some(c) = self.indegree_queue.peek() {
             if c.gen >= gen_cutoff {
-                self.indegree_walk_step();
+                self.indegree_walk_step()?;
             } else {
                 break;
             }
         }
+
+        Ok(())
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
@@ -186,14 +195,16 @@ impl<'a> TopoWalker<'a> {
         Ok(())
     }
 
-    fn explore_to_depth(&mut self, gen_cutoff: u32) {
+    fn explore_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
         while let Some(c) = self.explore_queue.peek() {
             if c.gen >= gen_cutoff {
-                self.explore_walk_step();
+                self.explore_walk_step()?;
             } else {
                 break;
             }
         }
+
+        Ok(())
     }
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
@@ -222,10 +233,9 @@ impl<'a> TopoWalker<'a> {
         let parents = self
             .commit_graph
             .commit_by_id(d.id)
-            .expect("commit_by_id")
+            .ok_or(Error::CommitNotFound)?
             .iter_parents()
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect parents");
+            .collect::<Result<Vec<_>, _>>()?;
 
         self.process_parents(d.clone());
 
@@ -310,10 +320,12 @@ impl<'a> Iterator for TopoWalker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
-    fn run_git_rev_list(tag: &str) -> Vec<String> {
+    fn run_git_rev_list(args: &[&str]) -> Vec<String> {
         let output = std::process::Command::new("git")
-            .args(["rev-list", "--topo-order", tag])
+            .args(["rev-list", "--topo-order"])
+            .args(args)
             .output()
             .expect("able to run git rev-list")
             .stdout;
@@ -330,7 +342,7 @@ mod tests {
         let t = TopoWalker::on_repo(&r, std::iter::once(tip)).unwrap();
 
         let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
-        let fasit = run_git_rev_list("first-test");
+        let fasit = run_git_rev_list(&["first-test"]);
         assert_eq!(mine, fasit);
     }
 
@@ -341,7 +353,7 @@ mod tests {
         let t = TopoWalker::on_repo(&r, std::iter::once(tip)).unwrap();
 
         let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
-        let fasit = run_git_rev_list("second-test");
+        let fasit = run_git_rev_list(&["second-test"]);
         assert_eq!(mine, fasit);
     }
 }
