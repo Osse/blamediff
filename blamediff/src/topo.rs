@@ -40,6 +40,38 @@ impl std::cmp::PartialEq for Item {
     }
 }
 
+#[derive(Debug)]
+pub enum Error {
+    MissingIndegree,
+    MissingItem,
+    CommitNotFound,
+    CommitGraphInit(gix::commitgraph::init::Error),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::MissingIndegree => write!(f, "Calculated indegree missing"),
+            Error::MissingItem => write!(f, "Internal item not added"),
+            Error::CommitNotFound => write!(f, "Commit not found in commit graph"),
+            Error::CommitGraphInit(e) => write!(f, "Error initializing graph: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+macro_rules! make_error {
+    ($e:ty, $b:ident) => {
+        impl From<$e> for Error {
+            fn from(e: $e) -> Self {
+                Error::$b(e)
+            }
+        }
+    };
+}
+make_error![gix::commitgraph::init::Error, CommitGraphInit];
+
 /// a walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker<'a> {
     repo: &'a gix::Repository,
@@ -57,7 +89,7 @@ impl<'a> TopoWalker<'a> {
     pub fn on_repo(
         repo: &'a gix::Repository,
         tips: impl IntoIterator<Item = impl Into<gix::ObjectId>>,
-    ) -> Result<Self, gix::commitgraph::init::Error> {
+    ) -> Result<Self, Error> {
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
 
         let mut topo_walker = Self {
@@ -77,7 +109,7 @@ impl<'a> TopoWalker<'a> {
             let gen = topo_walker
                 .commit_graph
                 .commit_by_id(id)
-                .expect("able to find commit in graph")
+                .ok_or(Error::CommitNotFound)?
                 .generation();
 
             if gen < topo_walker.min_gen {
@@ -102,7 +134,7 @@ impl<'a> TopoWalker<'a> {
             let i = *topo_walker
                 .indegrees
                 .get(id)
-                .expect("indegree already calculated");
+                .ok_or(Error::MissingIndegree)?;
 
             if i == 1 {
                 topo_walker.topo_queue.push(topo_walker.items[id].clone());
@@ -124,11 +156,15 @@ impl<'a> TopoWalker<'a> {
         }
     }
 
-    fn indegree_walk_step(&mut self) {
+    fn indegree_walk_step(&mut self) -> Result<(), Error> {
         if let Some(c) = self.indegree_queue.pop() {
             self.explore_to_depth(c.gen);
 
-            let commit = self.commit_graph.commit_by_id(c.id).expect("find");
+            let commit = self
+                .commit_graph
+                .commit_by_id(c.id)
+                .ok_or(Error::CommitNotFound)?;
+
             for p in commit.iter_parents() {
                 let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
                 let pid = gix::ObjectId::from(parent_commit.id());
@@ -146,6 +182,8 @@ impl<'a> TopoWalker<'a> {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn explore_to_depth(&mut self, gen_cutoff: u32) {
@@ -158,7 +196,7 @@ impl<'a> TopoWalker<'a> {
         }
     }
 
-    fn explore_walk_step(&mut self) {
+    fn explore_walk_step(&mut self) -> Result<(), Error> {
         if let Some(c) = self.explore_queue.pop() {
             self.process_parents(c.clone());
 
@@ -168,7 +206,7 @@ impl<'a> TopoWalker<'a> {
                 let item = self
                     .items
                     .get(parent_commit.id())
-                    .expect("item already added");
+                    .ok_or(Error::MissingItem)?;
 
                 if !item.flags.borrow().contains(WalkFlags::Explored) {
                     *item.flags.borrow_mut() |= WalkFlags::Explored;
@@ -176,9 +214,11 @@ impl<'a> TopoWalker<'a> {
                 }
             }
         }
+
+        Ok(())
     }
 
-    fn expand_topo_walk(&mut self, d: Rc<Item>) {
+    fn expand_topo_walk(&mut self, d: Rc<Item>) -> Result<(), Error> {
         let parents = self
             .commit_graph
             .commit_by_id(d.id)
@@ -198,10 +238,7 @@ impl<'a> TopoWalker<'a> {
                 self.compute_indegree_to_depth(self.min_gen);
             }
 
-            let i = self
-                .indegrees
-                .get_mut(&pid)
-                .expect("indegree already calculated");
+            let i = self.indegrees.get_mut(&pid).ok_or(Error::MissingIndegree)?;
 
             *i -= 1;
 
@@ -210,18 +247,24 @@ impl<'a> TopoWalker<'a> {
                 self.topo_queue.push(pd.clone());
             }
         }
+
+        Ok(())
     }
 
-    fn process_parents(&mut self, c: Rc<Item>) {
+    fn process_parents(&mut self, c: Rc<Item>) -> Result<(), Error> {
         if c.flags.borrow().contains(WalkFlags::Added) {
-            return;
+            return Ok(());
         }
+
         *c.flags.borrow_mut() |= WalkFlags::Added;
 
         let pass_flags = *c.flags.borrow() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
 
         if !c.flags.borrow().contains(WalkFlags::Uninteresting) {
-            let commit = self.commit_graph.commit_by_id(c.id).expect("find");
+            let commit = self
+                .commit_graph
+                .commit_by_id(c.id)
+                .ok_or(Error::CommitNotFound)?;
             for p in commit.iter_parents() {
                 let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
 
@@ -241,6 +284,8 @@ impl<'a> TopoWalker<'a> {
                 };
             }
         }
+
+        Ok(())
     }
 }
 
