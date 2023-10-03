@@ -1,9 +1,70 @@
 use gix::hashtable::{hash_map::Entry, HashMap};
+use std::borrow::BorrowMut;
+use std::cell::OnceCell;
 use std::cell::{RefCell, RefMut};
 use std::collections::BinaryHeap;
 use std::rc::Rc;
 
 use flagset::{flags, FlagSet};
+
+thread_local! {
+static INDENT: RefCell<usize> = RefCell::new(0);
+}
+
+struct Increaser;
+
+impl Increaser {
+    fn new() -> Self {
+        INDENT.with(|i| {
+            *i.borrow_mut() += 4;
+        });
+
+        Self {}
+    }
+}
+
+impl Drop for Increaser {
+    fn drop(&mut self) {
+        INDENT.with(|i| {
+            *i.borrow_mut() -= 4;
+        });
+    }
+}
+
+macro_rules! function {
+    () => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+
+        // Find and cut the rest of the path
+        match &name[..name.len() - 3].rfind(':') {
+            Some(pos) => &name[pos + 1..name.len() - 3],
+            None => &name[..name.len() - 3],
+        }
+    }};
+}
+
+macro_rules! topodbg {
+    () => {
+        ::std::eprintln!("{}[{}]", " ".repeat(INDENT.with(|i| *i.borrow())),
+            function!());
+    };
+    ($val:expr $(,)?) => {
+        match $val {
+            tmp => {
+                ::std::eprintln!("{}[{}] {} = {:?}", " ".repeat(INDENT.with(|i| *i.borrow())),
+                    function!(), ::std::stringify!($val), &tmp);
+                tmp
+            }
+        }
+    };
+    ($($val:expr),+ $(,)?) => {
+        ($($crate::topodbg!($val)),+,)
+    };
+}
 
 flags! {
     enum WalkFlags: u32 {
@@ -155,6 +216,7 @@ impl<'a> TopoWalker<'a> {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             if i == 1 {
+                dbg!(id);
                 s.topo_queue.push(s.items[id].clone());
             }
         }
@@ -165,6 +227,8 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!(gen_cutoff);
         while let Some(c) = self.indegree_queue.peek() {
             if c.gen >= gen_cutoff {
                 self.indegree_walk_step()?;
@@ -177,6 +241,8 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!();
         if let Some(c) = self.indegree_queue.pop() {
             self.explore_to_depth(c.gen);
 
@@ -207,6 +273,8 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn explore_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!();
         while let Some(c) = self.explore_queue.peek() {
             if c.gen >= gen_cutoff {
                 self.explore_walk_step()?;
@@ -219,6 +287,8 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!();
         if let Some(c) = self.explore_queue.pop() {
             self.process_parents(c.clone());
 
@@ -241,6 +311,8 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn expand_topo_walk(&mut self, d: Rc<Item>) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!(&d);
         let parents = self
             .commit_graph
             .commit_by_id(d.id)
@@ -270,6 +342,7 @@ impl<'a> TopoWalker<'a> {
             *i -= 1;
 
             if *i == 1 {
+                topodbg!(&pid);
                 self.topo_queue.push(pd.clone());
             }
         }
@@ -345,6 +418,8 @@ impl<'a> Iterator for TopoWalker<'a> {
     type Item = gix::ObjectId;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let i = Increaser::new();
+        topodbg!();
         let c = self.topo_queue.pop()?;
 
         let i = self
