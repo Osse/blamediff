@@ -10,9 +10,11 @@ flags! {
         Explored,
         InDegree,
         Uninteresting,
+        Bottom,
         Added,
         SymmetricLeft,
-        AncestryPath
+        AncestryPath,
+        Seen,
     }
 }
 
@@ -92,9 +94,8 @@ impl<'a> TopoWalker<'a> {
     pub fn on_repo(
         repo: &'a gix::Repository,
         tips: impl IntoIterator<Item = impl Into<gix::ObjectId>>,
+        bottoms: impl IntoIterator<Item = impl Into<gix::ObjectId>>,
     ) -> Result<Self, Error> {
-        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
-
         let mut indegrees = HashMap::default();
         let mut items = HashMap::default();
         let commit_graph = repo.commit_graph()?;
@@ -103,7 +104,16 @@ impl<'a> TopoWalker<'a> {
         let mut indegree_queue = BinaryHeap::new();
         let mut min_gen = u32::MAX;
 
-        for id in &tips {
+        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
+        let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
+        let bottom_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
+        let bottoms = bottoms.into_iter().map(Into::into).collect::<Vec<_>>();
+
+        for (id, flags) in tips
+            .iter()
+            .map(|id| (id, tip_flags))
+            .chain(bottoms.iter().map(|id| (id, bottom_flags)))
+        {
             *indegrees.entry(*id).or_default() = 1;
 
             let gen = commit_graph
@@ -118,13 +128,14 @@ impl<'a> TopoWalker<'a> {
             let item = Rc::new(Item {
                 id: *id,
                 gen,
-                flags: RefCell::new(WalkFlags::Explored | WalkFlags::InDegree),
+                flags: RefCell::new(flags),
             });
 
-            items.insert(*id, item.clone());
-
-            explore_queue.push(item.clone());
-            indegree_queue.push(item.clone());
+            if !tip_flags.contains(WalkFlags::Uninteresting) {
+                items.insert(*id, item.clone());
+                explore_queue.push(item.clone());
+                indegree_queue.push(item.clone());
+            }
         }
 
         let mut s = Self {
@@ -140,7 +151,7 @@ impl<'a> TopoWalker<'a> {
 
         s.compute_indegree_to_depth(min_gen)?;
 
-        for id in &tips {
+        for id in tips.iter().chain(bottoms.iter()) {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             if i == 1 {
@@ -243,6 +254,12 @@ impl<'a> TopoWalker<'a> {
             let parent_gen = self.commit_graph.commit_at(p).generation();
             let pid = gix::ObjectId::from(self.commit_graph.commit_at(p).id());
 
+            let pd = self.items.get(&pid).expect("item already added").clone();
+
+            if pd.flags.borrow().contains(WalkFlags::Uninteresting) {
+                continue;
+            }
+
             if parent_gen < self.min_gen {
                 self.min_gen = parent_gen;
                 self.compute_indegree_to_depth(self.min_gen);
@@ -253,7 +270,6 @@ impl<'a> TopoWalker<'a> {
             *i -= 1;
 
             if *i == 1 {
-                let pd = self.items.get(&pid).expect("item already added");
                 self.topo_queue.push(pd.clone());
             }
         }
@@ -262,15 +278,41 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn process_parents(&mut self, c: Rc<Item>) -> Result<(), Error> {
+        let i = Increaser::new();
+        topodbg!(&c);
         if c.flags.borrow().contains(WalkFlags::Added) {
             return Ok(());
         }
 
         *c.flags.borrow_mut() |= WalkFlags::Added;
 
-        let pass_flags = *c.flags.borrow() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
-
         if !c.flags.borrow().contains(WalkFlags::Uninteresting) {
+            let pass_flags =
+                *c.flags.borrow() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+            let commit = self
+                .commit_graph
+                .commit_by_id(c.id)
+                .ok_or(Error::CommitNotFound)?;
+            for p in commit.iter_parents() {
+                let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
+
+                let pid = gix::ObjectId::from(parent_commit.id());
+
+                match self.items.entry(pid) {
+                    Entry::Occupied(o) => {
+                        *o.get().flags.borrow_mut() |= pass_flags;
+                    }
+                    Entry::Vacant(v) => {
+                        v.insert(Rc::new(Item {
+                            id: pid,
+                            gen: parent_commit.generation(),
+                            flags: RefCell::new(pass_flags),
+                        }));
+                    }
+                };
+            }
+        } else {
+            let pass_flags = *c.flags.borrow() & (WalkFlags::Uninteresting);
             let commit = self
                 .commit_graph
                 .commit_by_id(c.id)
@@ -339,7 +381,12 @@ mod tests {
     fn first_test() {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("first-test").unwrap();
-        let t = TopoWalker::on_repo(&r, std::iter::once(tip)).unwrap();
+        let t = TopoWalker::on_repo(
+            &r,
+            std::iter::once(tip),
+            std::iter::empty::<gix::ObjectId>(),
+        )
+        .unwrap();
 
         let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["first-test"]);
@@ -350,10 +397,63 @@ mod tests {
     fn second_test() {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
-        let t = TopoWalker::on_repo(&r, std::iter::once(tip)).unwrap();
+        let t = TopoWalker::on_repo(
+            &r,
+            std::iter::once(tip),
+            std::iter::empty::<gix::ObjectId>(),
+        )
+        .unwrap();
 
         let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["second-test"]);
+        assert_eq!(mine, fasit);
+    }
+
+    #[test]
+    fn first_limited_test() {
+        let r = gix::discover(".").unwrap();
+        let tip = r.rev_parse_single("first-test").unwrap();
+        let bottom = r.rev_parse_single("6a30c80").unwrap();
+        let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
+
+        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let fasit = run_git_rev_list(&["6a30c80..first-test"]);
+        assert_eq!(mine, fasit);
+    }
+
+    #[test]
+    fn second_limited_test() {
+        let r = gix::discover(".").unwrap();
+        let tip = r.rev_parse_single("second-test").unwrap();
+        let bottom = r.rev_parse_single("6a30c80").unwrap();
+        let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
+
+        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let fasit = run_git_rev_list(&["6a30c80..second-test"]);
+        assert_eq!(mine, fasit);
+    }
+
+    #[test]
+    fn second_limited_test_left() {
+        let r = gix::discover(".").unwrap();
+        let tip = r.rev_parse_single("second-test").unwrap();
+        let bottom = r.rev_parse_single("8bf8780").unwrap();
+        let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
+
+        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let fasit = run_git_rev_list(&["8bf8780..second-test"]);
+        assert_eq!(mine, fasit);
+    }
+
+    #[test]
+    fn second_limited_test_right() {
+        let r = gix::discover(".").unwrap();
+        let tip = r.rev_parse_single("second-test").unwrap();
+        let bottom = r.rev_parse_single("bb48275").unwrap();
+        let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
+
+        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let fasit = run_git_rev_list(&["bb48275..second-test"]);
         assert_eq!(mine, fasit);
     }
 }
