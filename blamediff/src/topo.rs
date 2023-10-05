@@ -5,68 +5,10 @@ use gix::{
     ObjectId,
 };
 
-use std::cell::RefCell;
-
 use flagset::{flags, FlagSet};
 
-thread_local! {
-static INDENT: RefCell<usize> = RefCell::new(0);
-}
-
-struct Increaser;
-
-impl Increaser {
-    fn new() -> Self {
-        INDENT.with(|i| {
-            *i.borrow_mut() += 4;
-        });
-
-        Self {}
-    }
-}
-
-impl Drop for Increaser {
-    fn drop(&mut self) {
-        INDENT.with(|i| {
-            *i.borrow_mut() -= 4;
-        });
-    }
-}
-
-macro_rules! function {
-    () => {{
-        fn f() {}
-        fn type_name_of<T>(_: T) -> &'static str {
-            std::any::type_name::<T>()
-        }
-        let name = type_name_of(f);
-
-        // Find and cut the rest of the path
-        match &name[..name.len() - 3].rfind(':') {
-            Some(pos) => &name[pos + 1..name.len() - 3],
-            None => &name[..name.len() - 3],
-        }
-    }};
-}
-
-macro_rules! topodbg {
-    () => {
-        ::std::eprintln!("{}[{}]", " ".repeat(INDENT.with(|i| *i.borrow())),
-            function!());
-    };
-    ($val:expr $(,)?) => {
-        match $val {
-            tmp => {
-                ::std::eprintln!("{}[{}] {} = {:?}", " ".repeat(INDENT.with(|i| *i.borrow())),
-                    function!(), ::std::stringify!($val), &tmp);
-                tmp
-            }
-        }
-    };
-    ($($val:expr),+ $(,)?) => {
-        ($($crate::topodbg!($val)),+,)
-    };
-}
+// use ::trace::trace;
+// trace::init_depth_var!();
 
 flags! {
     enum WalkFlags: u32 {
@@ -130,6 +72,7 @@ pub struct TopoWalker {
     min_gen: u32,
 }
 
+// #[trace(disable(on_repo))]
 impl<'a> TopoWalker {
     /// Create a new TopoWalker that walks the given repository
     pub fn on_repo(
@@ -203,8 +146,6 @@ impl<'a> TopoWalker {
     }
 
     fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!(gen_cutoff);
         while let Some((gen, _)) = self.indegree_queue.peek() {
             if *gen >= gen_cutoff {
                 self.indegree_walk_step()?;
@@ -217,8 +158,6 @@ impl<'a> TopoWalker {
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!();
         if let Some((gen, id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
@@ -249,8 +188,6 @@ impl<'a> TopoWalker {
     }
 
     fn explore_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!();
         while let Some((gen, _)) = self.explore_queue.peek() {
             if *gen >= gen_cutoff {
                 self.explore_walk_step()?;
@@ -263,8 +200,6 @@ impl<'a> TopoWalker {
     }
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!();
         if let Some((_, id)) = self.explore_queue.pop() {
             self.process_parents(id)?;
 
@@ -292,8 +227,6 @@ impl<'a> TopoWalker {
     }
 
     fn expand_topo_walk(&mut self, id: ObjectId) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!(&id);
         let parents = self
             .commit_graph
             .commit_by_id(id)
@@ -323,7 +256,7 @@ impl<'a> TopoWalker {
             *i -= 1;
 
             if *i == 1 {
-                topodbg!(&pid);
+                // topodbg!(&pid);
                 self.topo_queue.push(pid);
             }
         }
@@ -332,9 +265,6 @@ impl<'a> TopoWalker {
     }
 
     fn process_parents(&mut self, id: ObjectId) -> Result<(), Error> {
-        let _i = Increaser::new();
-        topodbg!(&id);
-
         let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
         if state.0.contains(WalkFlags::Added) {
@@ -389,12 +319,11 @@ impl<'a> TopoWalker {
     }
 }
 
+// #[trace]
 impl Iterator for TopoWalker {
     type Item = ObjectId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let _i = Increaser::new();
-        topodbg!();
         let id = self.topo_queue.pop()?;
 
         let i = self

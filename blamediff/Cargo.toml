@@ -17,6 +17,7 @@ culpa = { path = "../culpa" }
 anyhow = "1"
 time = "0.3"
 flagset = "0.4.4"
+trace = "0.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
