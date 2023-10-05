@@ -546,7 +546,7 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     )?;
 
     for c in topo_walker {
-        println!("{}", c.to_hex());
+        println!("{}", c?.to_hex());
     }
 
     Ok(())

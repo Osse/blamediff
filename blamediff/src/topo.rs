@@ -61,7 +61,7 @@ macro_rules! make_error {
 make_error![gix::commitgraph::init::Error, CommitGraphInit];
 make_error![gix::commitgraph::file::commit::Error, CommitGraphFile];
 
-/// a walker that walks in topographical order, like `git rev-list --topo-order`.
+/// A commit walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker {
     commit_graph: Graph,
     indegrees: IdMap<i32>,
@@ -74,7 +74,9 @@ pub struct TopoWalker {
 
 // #[trace(disable(on_repo))]
 impl<'a> TopoWalker {
-    /// Create a new TopoWalker that walks the given repository
+    /// Create a new TopoWalker that walks the given repository, starting at the
+    /// tips and ending at the bottoms. Like `git rev-list --topo-order
+    /// ^bottom... tips...`
     pub fn on_repo(
         repo: &'a gix::Repository,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
@@ -86,7 +88,7 @@ impl<'a> TopoWalker {
 
         let mut explore_queue = PriorityQueue::new();
         let mut indegree_queue = PriorityQueue::new();
-        let mut min_gen = u32::MAX;
+        let mut min_gen = gix::commitgraph::GENERATION_NUMBER_INFINITY;
 
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
@@ -321,20 +323,28 @@ impl<'a> TopoWalker {
 
 // #[trace]
 impl Iterator for TopoWalker {
-    type Item = ObjectId;
+    type Item = Result<ObjectId, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let id = self.topo_queue.pop()?;
 
-        let i = self
-            .indegrees
-            .get_mut(&id)
-            .expect("indegree already calculated");
+        let i = match self.indegrees.get_mut(&id) {
+            Some(i) => i,
+            None => {
+                return Some(Err(Error::MissingIndegree));
+            }
+        };
+        // .map_err(|e| Some(e))?;
         *i = 0;
 
-        self.expand_topo_walk(id).expect("we've come this far...");
+        match self.expand_topo_walk(id) {
+            Ok(_) => (),
+            Err(e) => {
+                return Some(Err(e));
+            }
+        };
 
-        Some(id)
+        Some(Ok(id))
     }
 }
 
@@ -367,7 +377,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["first-test"]);
         assert_eq!(mine, fasit);
     }
@@ -383,7 +395,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["second-test"]);
         assert_eq!(mine, fasit);
     }
@@ -395,7 +409,9 @@ mod tests {
         let bottom = r.rev_parse_single("6a30c80").unwrap();
         let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["6a30c80..first-test"]);
         assert_eq!(mine, fasit);
     }
@@ -407,7 +423,9 @@ mod tests {
         let bottom = r.rev_parse_single("6a30c80").unwrap();
         let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["6a30c80..second-test"]);
         assert_eq!(mine, fasit);
     }
@@ -419,7 +437,9 @@ mod tests {
         let bottom = r.rev_parse_single("8bf8780").unwrap();
         let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["8bf8780..second-test"]);
         assert_eq!(mine, fasit);
     }
@@ -431,7 +451,9 @@ mod tests {
         let bottom = r.rev_parse_single("bb48275").unwrap();
         let t = TopoWalker::on_repo(&r, std::iter::once(tip), std::iter::once(bottom)).unwrap();
 
-        let mine = t.map(|id| id.to_hex().to_string()).collect::<Vec<_>>();
+        let mine = t
+            .map(|id| id.unwrap().to_hex().to_string())
+            .collect::<Vec<_>>();
         let fasit = run_git_rev_list(&["bb48275..second-test"]);
         assert_eq!(mine, fasit);
     }
