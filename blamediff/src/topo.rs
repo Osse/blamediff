@@ -1,9 +1,11 @@
-use gix::hashtable::{hash_map::Entry, HashMap};
-use std::borrow::BorrowMut;
-use std::cell::OnceCell;
-use std::cell::{RefCell, RefMut};
-use std::collections::BinaryHeap;
-use std::rc::Rc;
+use gix::{
+    commitgraph::Graph,
+    hashtable::hash_map::Entry,
+    revwalk::{graph::IdMap, PriorityQueue},
+    ObjectId,
+};
+
+use std::cell::RefCell;
 
 use flagset::{flags, FlagSet};
 
@@ -79,34 +81,13 @@ flags! {
     }
 }
 
-#[derive(Debug, Eq)]
-struct Item {
-    id: gix::ObjectId,
-    gen: u32,
-    flags: RefCell<FlagSet<WalkFlags>>,
-}
-
-impl std::cmp::Ord for Item {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.gen.cmp(&other.gen)
-    }
-}
-impl std::cmp::PartialOrd for Item {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.gen.partial_cmp(&other.gen)
-    }
-}
-
-impl std::cmp::PartialEq for Item {
-    fn eq(&self, other: &Self) -> bool {
-        self.gen == other.gen
-    }
-}
+#[derive(Debug)]
+struct WalkState(FlagSet<WalkFlags>);
 
 #[derive(Debug)]
 pub enum Error {
     MissingIndegree,
-    MissingItem,
+    MissingState,
     CommitNotFound,
     CommitGraphInit(gix::commitgraph::init::Error),
     CommitGraphFile(gix::commitgraph::file::commit::Error),
@@ -116,7 +97,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::MissingIndegree => write!(f, "Calculated indegree missing"),
-            Error::MissingItem => write!(f, "Internal item not added"),
+            Error::MissingState => write!(f, "Internal state not found"),
             Error::CommitNotFound => write!(f, "Commit not found in commit graph"),
             Error::CommitGraphInit(e) => write!(f, "Error initializing graph: {}", e),
             Error::CommitGraphFile(e) => write!(f, "Error doing file stuff: {}", e),
@@ -139,34 +120,34 @@ make_error![gix::commitgraph::init::Error, CommitGraphInit];
 make_error![gix::commitgraph::file::commit::Error, CommitGraphFile];
 
 /// a walker that walks in topographical order, like `git rev-list --topo-order`.
-pub struct TopoWalker<'a> {
-    repo: &'a gix::Repository,
-    commit_graph: gix::commitgraph::Graph,
-    indegrees: HashMap<gix::ObjectId, i32>,
-    items: HashMap<gix::ObjectId, Rc<Item>>,
-    explore_queue: BinaryHeap<Rc<Item>>,
-    indegree_queue: BinaryHeap<Rc<Item>>,
-    topo_queue: Vec<Rc<Item>>,
+pub struct TopoWalker {
+    commit_graph: Graph,
+    indegrees: IdMap<i32>,
+    states: IdMap<WalkState>,
+    explore_queue: PriorityQueue<u32, ObjectId>,
+    indegree_queue: PriorityQueue<u32, ObjectId>,
+    topo_queue: Vec<ObjectId>,
     min_gen: u32,
 }
 
-impl<'a> TopoWalker<'a> {
+impl<'a> TopoWalker {
     /// Create a new TopoWalker that walks the given repository
     pub fn on_repo(
         repo: &'a gix::Repository,
-        tips: impl IntoIterator<Item = impl Into<gix::ObjectId>>,
-        bottoms: impl IntoIterator<Item = impl Into<gix::ObjectId>>,
+        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
+        bottoms: impl IntoIterator<Item = impl Into<ObjectId>>,
     ) -> Result<Self, Error> {
-        let mut indegrees = HashMap::default();
-        let mut items = HashMap::default();
+        let mut indegrees = IdMap::default();
+        let mut states = IdMap::default();
         let commit_graph = repo.commit_graph()?;
 
-        let mut explore_queue = BinaryHeap::new();
-        let mut indegree_queue = BinaryHeap::new();
+        let mut explore_queue = PriorityQueue::new();
+        let mut indegree_queue = PriorityQueue::new();
         let mut min_gen = u32::MAX;
 
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
+
         let bottom_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
         let bottoms = bottoms.into_iter().map(Into::into).collect::<Vec<_>>();
 
@@ -186,24 +167,19 @@ impl<'a> TopoWalker<'a> {
                 min_gen = gen;
             }
 
-            let item = Rc::new(Item {
-                id: *id,
-                gen,
-                flags: RefCell::new(flags),
-            });
+            let state = WalkState(flags);
 
             if !tip_flags.contains(WalkFlags::Uninteresting) {
-                items.insert(*id, item.clone());
-                explore_queue.push(item.clone());
-                indegree_queue.push(item.clone());
+                states.insert(*id, state);
+                explore_queue.insert(gen, *id);
+                indegree_queue.insert(gen, *id);
             }
         }
 
         let mut s = Self {
-            repo,
             commit_graph,
             indegrees,
-            items,
+            states,
             explore_queue,
             indegree_queue,
             topo_queue: vec![],
@@ -217,7 +193,7 @@ impl<'a> TopoWalker<'a> {
 
             if i == 1 {
                 dbg!(id);
-                s.topo_queue.push(s.items[id].clone());
+                s.topo_queue.push(*id);
             }
         }
 
@@ -227,10 +203,10 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        let i = Increaser::new();
+        let _i = Increaser::new();
         topodbg!(gen_cutoff);
-        while let Some(c) = self.indegree_queue.peek() {
-            if c.gen >= gen_cutoff {
+        while let Some((gen, _)) = self.indegree_queue.peek() {
+            if *gen >= gen_cutoff {
                 self.indegree_walk_step()?;
             } else {
                 break;
@@ -241,30 +217,30 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
-        let i = Increaser::new();
+        let _i = Increaser::new();
         topodbg!();
-        if let Some(c) = self.indegree_queue.pop() {
-            self.explore_to_depth(c.gen);
+        if let Some((gen, id)) = self.indegree_queue.pop() {
+            self.explore_to_depth(gen)?;
 
             let commit = self
                 .commit_graph
-                .commit_by_id(c.id)
+                .commit_by_id(id)
                 .ok_or(Error::CommitNotFound)?;
 
             for p in commit.iter_parents() {
                 let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
-                let pid = gix::ObjectId::from(parent_commit.id());
+                let pid = ObjectId::from(parent_commit.id());
 
                 self.indegrees
                     .entry(pid)
                     .and_modify(|e| *e += 1)
                     .or_insert(2);
 
-                let item = &self.items[&pid];
+                let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
 
-                if !item.flags.borrow().contains(WalkFlags::InDegree) {
-                    *item.flags.borrow_mut() |= WalkFlags::InDegree;
-                    self.indegree_queue.push(item.clone());
+                if !state.0.contains(WalkFlags::InDegree) {
+                    state.0 |= WalkFlags::InDegree;
+                    self.indegree_queue.insert(parent_commit.generation(), pid);
                 }
             }
         }
@@ -273,10 +249,10 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn explore_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        let i = Increaser::new();
+        let _i = Increaser::new();
         topodbg!();
-        while let Some(c) = self.explore_queue.peek() {
-            if c.gen >= gen_cutoff {
+        while let Some((gen, _)) = self.explore_queue.peek() {
+            if *gen >= gen_cutoff {
                 self.explore_walk_step()?;
             } else {
                 break;
@@ -287,22 +263,27 @@ impl<'a> TopoWalker<'a> {
     }
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
-        let i = Increaser::new();
+        let _i = Increaser::new();
         topodbg!();
-        if let Some(c) = self.explore_queue.pop() {
-            self.process_parents(c.clone());
+        if let Some((_, id)) = self.explore_queue.pop() {
+            self.process_parents(id)?;
 
-            let commit = self.commit_graph.commit_by_id(c.id).expect("find");
+            let commit = self
+                .commit_graph
+                .commit_by_id(id)
+                .ok_or(Error::CommitNotFound)?;
+
             for p in commit.iter_parents() {
-                let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
-                let item = self
-                    .items
-                    .get(parent_commit.id())
-                    .ok_or(Error::MissingItem)?;
+                let parent_commit = self.commit_graph.commit_at(p?);
+                let state = self
+                    .states
+                    .get_mut(parent_commit.id())
+                    .ok_or(Error::MissingState)?;
 
-                if !item.flags.borrow().contains(WalkFlags::Explored) {
-                    *item.flags.borrow_mut() |= WalkFlags::Explored;
-                    self.explore_queue.push(item.clone());
+                if !state.0.contains(WalkFlags::Explored) {
+                    state.0 |= WalkFlags::Explored;
+                    self.explore_queue
+                        .insert(parent_commit.generation(), parent_commit.id().into());
                 }
             }
         }
@@ -310,31 +291,31 @@ impl<'a> TopoWalker<'a> {
         Ok(())
     }
 
-    fn expand_topo_walk(&mut self, d: Rc<Item>) -> Result<(), Error> {
-        let i = Increaser::new();
-        topodbg!(&d);
+    fn expand_topo_walk(&mut self, id: ObjectId) -> Result<(), Error> {
+        let _i = Increaser::new();
+        topodbg!(&id);
         let parents = self
             .commit_graph
-            .commit_by_id(d.id)
+            .commit_by_id(id)
             .ok_or(Error::CommitNotFound)?
             .iter_parents()
             .collect::<Result<Vec<_>, _>>()?;
 
-        self.process_parents(d.clone());
+        self.process_parents(id)?;
 
         for p in parents {
             let parent_gen = self.commit_graph.commit_at(p).generation();
-            let pid = gix::ObjectId::from(self.commit_graph.commit_at(p).id());
+            let pid = ObjectId::from(self.commit_graph.commit_at(p).id());
 
-            let pd = self.items.get(&pid).expect("item already added").clone();
+            let parent_flags = self.states.get(&pid).ok_or(Error::MissingState)?;
 
-            if pd.flags.borrow().contains(WalkFlags::Uninteresting) {
+            if parent_flags.0.contains(WalkFlags::Uninteresting) {
                 continue;
             }
 
             if parent_gen < self.min_gen {
                 self.min_gen = parent_gen;
-                self.compute_indegree_to_depth(self.min_gen);
+                self.compute_indegree_to_depth(self.min_gen)?;
             }
 
             let i = self.indegrees.get_mut(&pid).ok_or(Error::MissingIndegree)?;
@@ -343,68 +324,62 @@ impl<'a> TopoWalker<'a> {
 
             if *i == 1 {
                 topodbg!(&pid);
-                self.topo_queue.push(pd.clone());
+                self.topo_queue.push(pid);
             }
         }
 
         Ok(())
     }
 
-    fn process_parents(&mut self, c: Rc<Item>) -> Result<(), Error> {
-        let i = Increaser::new();
-        topodbg!(&c);
-        if c.flags.borrow().contains(WalkFlags::Added) {
+    fn process_parents(&mut self, id: ObjectId) -> Result<(), Error> {
+        let _i = Increaser::new();
+        topodbg!(&id);
+
+        let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
+
+        if state.0.contains(WalkFlags::Added) {
             return Ok(());
         }
 
-        *c.flags.borrow_mut() |= WalkFlags::Added;
+        state.0 != WalkFlags::Added;
 
-        if !c.flags.borrow().contains(WalkFlags::Uninteresting) {
-            let pass_flags =
-                *c.flags.borrow() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+        if state.0.contains(WalkFlags::Uninteresting) {
+            let pass_flags = state.0 & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+
             let commit = self
                 .commit_graph
-                .commit_by_id(c.id)
+                .commit_by_id(id)
                 .ok_or(Error::CommitNotFound)?;
+
             for p in commit.iter_parents() {
-                let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
+                let parent_commit = self.commit_graph.commit_at(p?);
 
-                let pid = gix::ObjectId::from(parent_commit.id());
+                let pid = ObjectId::from(parent_commit.id());
 
-                match self.items.entry(pid) {
-                    Entry::Occupied(o) => {
-                        *o.get().flags.borrow_mut() |= pass_flags;
-                    }
+                match self.states.entry(pid) {
+                    Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
                     Entry::Vacant(v) => {
-                        v.insert(Rc::new(Item {
-                            id: pid,
-                            gen: parent_commit.generation(),
-                            flags: RefCell::new(pass_flags),
-                        }));
+                        v.insert(WalkState(pass_flags));
                     }
                 };
             }
         } else {
-            let pass_flags = *c.flags.borrow() & (WalkFlags::Uninteresting);
+            let pass_flags = state.0 & WalkFlags::Uninteresting;
+
             let commit = self
                 .commit_graph
-                .commit_by_id(c.id)
+                .commit_by_id(id)
                 .ok_or(Error::CommitNotFound)?;
+
             for p in commit.iter_parents() {
-                let parent_commit = self.commit_graph.commit_at(p.expect("get position"));
+                let parent_commit = self.commit_graph.commit_at(p?);
 
-                let pid = gix::ObjectId::from(parent_commit.id());
+                let pid = ObjectId::from(parent_commit.id());
 
-                match self.items.entry(pid) {
-                    Entry::Occupied(o) => {
-                        *o.get().flags.borrow_mut() |= pass_flags;
-                    }
+                match self.states.entry(pid) {
+                    Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
                     Entry::Vacant(v) => {
-                        v.insert(Rc::new(Item {
-                            id: pid,
-                            gen: parent_commit.generation(),
-                            flags: RefCell::new(pass_flags),
-                        }));
+                        v.insert(WalkState(pass_flags));
                     }
                 };
             }
@@ -414,23 +389,23 @@ impl<'a> TopoWalker<'a> {
     }
 }
 
-impl<'a> Iterator for TopoWalker<'a> {
-    type Item = gix::ObjectId;
+impl Iterator for TopoWalker {
+    type Item = ObjectId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let i = Increaser::new();
+        let _i = Increaser::new();
         topodbg!();
-        let c = self.topo_queue.pop()?;
+        let id = self.topo_queue.pop()?;
 
         let i = self
             .indegrees
-            .get_mut(&c.id)
+            .get_mut(&id)
             .expect("indegree already calculated");
         *i = 0;
 
-        self.expand_topo_walk(c.clone());
+        self.expand_topo_walk(id).expect("we've come this far...");
 
-        Some(c.id)
+        Some(id)
     }
 }
 
