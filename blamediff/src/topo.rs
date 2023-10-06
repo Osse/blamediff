@@ -62,7 +62,7 @@ make_error![gix_commitgraph::file::commit::Error, CommitGraphFile];
 /// A commit walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker {
     commit_graph: Graph,
-    indegrees: IdMap<i32>,
+    indegrees: IdMap<Option<i32>>,
     states: IdMap<WalkState>,
     explore_queue: PriorityQueue<u32, ObjectId>,
     indegree_queue: PriorityQueue<u32, ObjectId>,
@@ -99,7 +99,7 @@ impl<'a> TopoWalker {
             .map(|id| (id, tip_flags))
             .chain(bottoms.iter().map(|id| (id, bottom_flags)))
         {
-            *indegrees.entry(*id).or_default() = 1;
+            *indegrees.entry(*id).or_default() = Some(0);
 
             let gen = commit_graph
                 .commit_by_id(id)
@@ -134,7 +134,7 @@ impl<'a> TopoWalker {
         for id in tips.iter().chain(bottoms.iter()) {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
-            if i == 1 {
+            if i == Some(0) {
                 dbg!(id);
                 s.topo_queue.push(*id);
             }
@@ -172,8 +172,8 @@ impl<'a> TopoWalker {
 
                 self.indegrees
                     .entry(pid)
-                    .and_modify(|e| *e += 1)
-                    .or_insert(2);
+                    .and_modify(|e| *e = e.map(|ee| ee + 1))
+                    .or_insert(Some(1));
 
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
 
@@ -253,9 +253,9 @@ impl<'a> TopoWalker {
 
             let i = self.indegrees.get_mut(&pid).ok_or(Error::MissingIndegree)?;
 
-            *i -= 1;
+            *i = i.map(|ii| ii - 1);
 
-            if *i == 1 {
+            if *i == Some(0) {
                 // topodbg!(&pid);
                 self.topo_queue.push(pid);
             }
@@ -333,7 +333,7 @@ impl Iterator for TopoWalker {
             }
         };
         // .map_err(|e| Some(e))?;
-        *i = 0;
+        *i = None;
 
         match self.expand_topo_walk(id) {
             Ok(_) => (),
