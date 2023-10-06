@@ -1,9 +1,7 @@
-use gix::{
-    commitgraph::Graph,
-    hashtable::hash_map::Entry,
-    revwalk::{graph::IdMap, PriorityQueue},
-    ObjectId,
-};
+use gix_commitgraph::Graph;
+use gix_hashtable::hash_map::Entry;
+use gix_revwalk::{graph::IdMap, PriorityQueue};
+use gix_hash::ObjectId;
 
 use flagset::{flags, FlagSet};
 
@@ -31,8 +29,8 @@ pub enum Error {
     MissingIndegree,
     MissingState,
     CommitNotFound,
-    CommitGraphInit(gix::commitgraph::init::Error),
-    CommitGraphFile(gix::commitgraph::file::commit::Error),
+    CommitGraphInit(gix_commitgraph::init::Error),
+    CommitGraphFile(gix_commitgraph::file::commit::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -58,8 +56,8 @@ macro_rules! make_error {
         }
     };
 }
-make_error![gix::commitgraph::init::Error, CommitGraphInit];
-make_error![gix::commitgraph::file::commit::Error, CommitGraphFile];
+make_error![gix_commitgraph::init::Error, CommitGraphInit];
+make_error![gix_commitgraph::file::commit::Error, CommitGraphFile];
 
 /// A commit walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker {
@@ -88,7 +86,7 @@ impl<'a> TopoWalker {
 
         let mut explore_queue = PriorityQueue::new();
         let mut indegree_queue = PriorityQueue::new();
-        let mut min_gen = gix::commitgraph::GENERATION_NUMBER_INFINITY;
+        let mut min_gen = gix_commitgraph::GENERATION_NUMBER_INFINITY;
 
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;

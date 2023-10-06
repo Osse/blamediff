@@ -11,7 +11,11 @@ description = "Program using culpa to blame files and diffs"
 
 [dependencies]
 gix = "0.54"
+gix-commitgraph = "*"
+gix-revwalk = "*"
 gix-revision = "*"
+gix-hash = "*"
+gix-hashtable = "*"
 clap = { version = "4.2", features = ["derive"] }
 culpa = { path = "../culpa" }
 anyhow = "1"
