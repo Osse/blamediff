@@ -128,6 +128,7 @@ dependencies = [
  "gix-revision",
  "gix-revwalk",
  "pretty_assertions",
+ "thiserror",
  "time",
  "trace",
 ]

@@ -24,40 +24,19 @@ flags! {
 #[derive(Debug)]
 struct WalkState(FlagSet<WalkFlags>);
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Calculated indegree missing")]
     MissingIndegree,
+    #[error("Internal state not found")]
     MissingState,
+    #[error("Commit not found in commit graph")]
     CommitNotFound,
-    CommitGraphInit(gix_commitgraph::init::Error),
-    CommitGraphFile(gix_commitgraph::file::commit::Error),
+    #[error("Error initializing graph: {0}")]
+    CommitGraphInit(#[from] gix_commitgraph::init::Error),
+    #[error("Error doing file stuff: {0}")]
+    CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
 }
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::MissingIndegree => write!(f, "Calculated indegree missing"),
-            Error::MissingState => write!(f, "Internal state not found"),
-            Error::CommitNotFound => write!(f, "Commit not found in commit graph"),
-            Error::CommitGraphInit(e) => write!(f, "Error initializing graph: {}", e),
-            Error::CommitGraphFile(e) => write!(f, "Error doing file stuff: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-macro_rules! make_error {
-    ($e:ty, $b:ident) => {
-        impl From<$e> for Error {
-            fn from(e: $e) -> Self {
-                Error::$b(e)
-            }
-        }
-    };
-}
-make_error![gix_commitgraph::init::Error, CommitGraphInit];
-make_error![gix_commitgraph::file::commit::Error, CommitGraphFile];
 
 /// A commit walker that walks in topographical order, like `git rev-list --topo-order`.
 pub struct TopoWalker {

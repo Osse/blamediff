@@ -22,6 +22,7 @@ anyhow = "1"
 time = "0.3"
 flagset = "0.4.4"
 trace = "0.1"
+thiserror = "1.0.49"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
