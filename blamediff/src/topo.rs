@@ -59,13 +59,15 @@ impl<'a> TopoWalker {
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
         bottoms: impl IntoIterator<Item = impl Into<ObjectId>>,
     ) -> Result<Self, Error> {
-        let mut indegrees = IdMap::default();
-        let mut states = IdMap::default();
-        let commit_graph = repo.commit_graph()?;
-
-        let mut explore_queue = PriorityQueue::new();
-        let mut indegree_queue = PriorityQueue::new();
-        let mut min_gen = gix_commitgraph::GENERATION_NUMBER_INFINITY;
+        let mut s = Self {
+            commit_graph: repo.commit_graph()?,
+            indegrees: IdMap::default(),
+            states: IdMap::default(),
+            explore_queue: PriorityQueue::new(),
+            indegree_queue: PriorityQueue::new(),
+            topo_queue: vec![],
+            min_gen: gix_commitgraph::GENERATION_NUMBER_INFINITY,
+        };
 
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
@@ -78,37 +80,26 @@ impl<'a> TopoWalker {
             .map(|id| (id, tip_flags))
             .chain(bottoms.iter().map(|id| (id, bottom_flags)))
         {
-            *indegrees.entry(*id).or_default() = 1;
+            *s.indegrees.entry(*id).or_default() = 1;
 
-            let gen = commit_graph
+            let gen = s
+                .commit_graph
                 .commit_by_id(id)
                 .ok_or(Error::CommitNotFound)?
                 .generation();
 
-            if gen < min_gen {
-                min_gen = gen;
+            if gen < s.min_gen {
+                s.min_gen = gen;
             }
 
             let state = WalkState(flags);
 
-            if !tip_flags.contains(WalkFlags::Uninteresting) {
-                states.insert(*id, state);
-                explore_queue.insert(gen, *id);
-                indegree_queue.insert(gen, *id);
-            }
+            s.states.insert(*id, state);
+            s.explore_queue.insert(gen, *id);
+            s.indegree_queue.insert(gen, *id);
         }
 
-        let mut s = Self {
-            commit_graph,
-            indegrees,
-            states,
-            explore_queue,
-            indegree_queue,
-            topo_queue: vec![],
-            min_gen,
-        };
-
-        s.compute_indegree_to_depth(min_gen)?;
+        s.compute_indegree_to_depth(s.min_gen)?;
 
         for id in tips.iter().chain(bottoms.iter()) {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
