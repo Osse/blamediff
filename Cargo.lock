@@ -125,6 +125,8 @@ dependencies = [
  "gix-commitgraph",
  "gix-hash",
  "gix-hashtable",
+ "gix-object",
+ "gix-odb",
  "gix-revision",
  "gix-revwalk",
  "pretty_assertions",

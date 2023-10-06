@@ -16,6 +16,8 @@ gix-revwalk = "*"
 gix-revision = "*"
 gix-hash = "*"
 gix-hashtable = "*"
+gix-object = "*"
+gix-odb = "*"
 clap = { version = "4.2", features = ["derive"] }
 culpa = { path = "../culpa" }
 anyhow = "1"
