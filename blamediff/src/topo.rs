@@ -1,7 +1,7 @@
 use gix_commitgraph::Graph;
+use gix_hash::ObjectId;
 use gix_hashtable::hash_map::Entry;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
-use gix_hash::ObjectId;
 
 use flagset::{flags, FlagSet};
 
