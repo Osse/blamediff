@@ -252,46 +252,28 @@ impl<'a> TopoWalker {
 
         state.0 != WalkFlags::Added;
 
-        if state.0.contains(WalkFlags::Uninteresting) {
-            let pass_flags = state.0 & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
-
-            let commit = self
-                .commit_graph
-                .commit_by_id(id)
-                .ok_or(Error::CommitNotFound)?;
-
-            for p in commit.iter_parents() {
-                let parent_commit = self.commit_graph.commit_at(p?);
-
-                let pid = ObjectId::from(parent_commit.id());
-
-                match self.states.entry(pid) {
-                    Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
-                    Entry::Vacant(v) => {
-                        v.insert(WalkState(pass_flags));
-                    }
-                };
-            }
+        let pass_flags = if state.0.contains(WalkFlags::Uninteresting) {
+            state.0 & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath)
         } else {
-            let pass_flags = state.0 & WalkFlags::Uninteresting;
+            state.0 & WalkFlags::Uninteresting
+        };
 
-            let commit = self
-                .commit_graph
-                .commit_by_id(id)
-                .ok_or(Error::CommitNotFound)?;
+        let commit = self
+            .commit_graph
+            .commit_by_id(id)
+            .ok_or(Error::CommitNotFound)?;
 
-            for p in commit.iter_parents() {
-                let parent_commit = self.commit_graph.commit_at(p?);
+        for p in commit.iter_parents() {
+            let parent_commit = self.commit_graph.commit_at(p?);
 
-                let pid = ObjectId::from(parent_commit.id());
+            let pid = ObjectId::from(parent_commit.id());
 
-                match self.states.entry(pid) {
-                    Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
-                    Entry::Vacant(v) => {
-                        v.insert(WalkState(pass_flags));
-                    }
-                };
-            }
+            match self.states.entry(pid) {
+                Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
+                Entry::Vacant(v) => {
+                    v.insert(WalkState(pass_flags));
+                }
+            };
         }
 
         Ok(())
