@@ -60,7 +60,7 @@ impl<'repo> TopoWalker<'repo> {
     pub fn on_repo(
         repo: &'repo gix::Repository,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
-        bottoms: impl IntoIterator<Item = impl Into<ObjectId>>,
+        ends: impl IntoIterator<Item = impl Into<ObjectId>>,
     ) -> Result<Self, Error> {
         let mut s = Self {
             repo,
@@ -77,13 +77,13 @@ impl<'repo> TopoWalker<'repo> {
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
 
-        let bottom_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
-        let bottoms = bottoms.into_iter().map(Into::into).collect::<Vec<_>>();
+        let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
+        let ends = ends.into_iter().map(Into::into).collect::<Vec<_>>();
 
         for (id, flags) in tips
             .iter()
             .map(|id| (id, tip_flags))
-            .chain(bottoms.iter().map(|id| (id, bottom_flags)))
+            .chain(ends.iter().map(|id| (id, end_flags)))
         {
             *s.indegrees.entry(*id).or_default() = 1;
 
@@ -110,7 +110,7 @@ impl<'repo> TopoWalker<'repo> {
 
         s.compute_indegree_to_depth(s.min_gen)?;
 
-        for id in tips.iter().chain(bottoms.iter()) {
+        for id in tips.iter().chain(ends.iter()) {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             if i == 1 {
@@ -179,7 +179,7 @@ impl<'repo> TopoWalker<'repo> {
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
         if let Some((_, id)) = self.explore_queue.pop() {
-            self.process_parents(id)?;
+            self.process_parents(&id)?;
 
             let pgen = get_parent_generations(
                 &self.commit_graph,
@@ -201,7 +201,7 @@ impl<'repo> TopoWalker<'repo> {
         Ok(())
     }
 
-    fn expand_topo_walk(&mut self, id: ObjectId) -> Result<(), Error> {
+    fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
         self.process_parents(id)?;
 
         let pgen = get_parent_generations(
@@ -236,8 +236,8 @@ impl<'repo> TopoWalker<'repo> {
         Ok(())
     }
 
-    fn process_parents(&mut self, id: ObjectId) -> Result<(), Error> {
-        let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
+    fn process_parents(&mut self, id: &oid) -> Result<(), Error> {
+        let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
         if state.0.contains(WalkFlags::Added) {
             return Ok(());
@@ -337,10 +337,10 @@ impl Iterator for TopoWalker<'_> {
                 return Some(Err(Error::MissingIndegree));
             }
         };
-        // .map_err(|e| Some(e))?;
+
         *i = 0;
 
-        match self.expand_topo_walk(id) {
+        match self.expand_topo_walk(&id) {
             Ok(_) => (),
             Err(e) => {
                 return Some(Err(e));
