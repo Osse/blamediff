@@ -53,9 +53,15 @@ struct WalkState(FlagSet<WalkFlags>);
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
 /// necessarily up to date.
-pub struct TopoWalker<'repo> {
-    repo: &'repo gix::Repository,
+// pub struct TopoWalker<'repo> {
+pub struct TopoWalker<Find, E>
+where
+    Find:
+        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
     commit_graph: Graph,
+    find: Find,
     indegrees: IdMap<i32>,
     states: IdMap<WalkState>,
     explore_queue: PriorityQueue<u32, ObjectId>,
@@ -66,18 +72,24 @@ pub struct TopoWalker<'repo> {
 }
 
 // #[trace(disable(on_repo))]
-impl<'repo> TopoWalker<'repo> {
+impl<Find, E> TopoWalker<Find, E>
+where
+    Find:
+        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
     /// Create a new TopoWalker that walks the given repository, starting at the
     /// tips and ending at the bottoms. Like `git rev-list --topo-order
     /// ^bottom... tips...`
     pub fn new(
-        repo: &'repo gix::Repository,
+        commit_graph: gix_commitgraph::Graph,
+        find: Find,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
         ends: impl IntoIterator<Item = impl Into<ObjectId>>,
     ) -> Result<Self, Error> {
         let mut s = Self {
-            repo,
-            commit_graph: repo.commit_graph()?,
+            commit_graph,
+            find,
             indegrees: IdMap::default(),
             states: IdMap::default(),
             explore_queue: PriorityQueue::new(),
@@ -100,13 +112,8 @@ impl<'repo> TopoWalker<'repo> {
         {
             *s.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(
-                &s.commit_graph,
-                |id, buf| s.repo.objects.find_commit_iter(id, buf),
-                id,
-                &mut s.buf,
-            )
-            .map_err(|_err| Error::CommitNotFound)?;
+            let commit = crate::topo::find(&s.commit_graph, &mut s.find, id, &mut s.buf)
+                .map_err(|_err| Error::CommitNotFound)?;
 
             let gen = match commit {
                 Either::CommitRefIter(c) => gix_commitgraph::GENERATION_NUMBER_INFINITY,
@@ -155,12 +162,8 @@ impl<'repo> TopoWalker<'repo> {
         if let Some((gen, id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
-            let pgen = get_parent_generations(
-                &self.commit_graph,
-                |id, buf| self.repo.objects.find_commit_iter(id, buf),
-                &id,
-                &mut self.buf,
-            )?;
+            let pgen =
+                get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
             for (pid, gen) in pgen {
                 self.indegrees
@@ -196,12 +199,8 @@ impl<'repo> TopoWalker<'repo> {
         if let Some((_, id)) = self.explore_queue.pop() {
             self.process_parents(&id)?;
 
-            let pgen = get_parent_generations(
-                &self.commit_graph,
-                |id, buf| self.repo.objects.find_commit_iter(id, buf),
-                &id,
-                &mut self.buf,
-            )?;
+            let pgen =
+                get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
             for (pid, gen) in pgen {
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
@@ -219,12 +218,7 @@ impl<'repo> TopoWalker<'repo> {
     fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
         self.process_parents(id)?;
 
-        let pgen = get_parent_generations(
-            &self.commit_graph,
-            |id, buf| self.repo.objects.find_commit_iter(id, buf),
-            &id,
-            &mut self.buf,
-        )?;
+        let pgen = get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
         for (pid, parent_gen) in pgen {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
@@ -265,12 +259,7 @@ impl<'repo> TopoWalker<'repo> {
             state.0
         };
 
-        let pgen = get_parent_generations(
-            &self.commit_graph,
-            |id, buf| self.repo.objects.find_commit_iter(id, buf),
-            &id,
-            &mut self.buf,
-        )?;
+        let pgen = get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
         for (pid, _) in pgen {
             match self.states.entry(pid) {
@@ -286,7 +275,12 @@ impl<'repo> TopoWalker<'repo> {
 }
 
 // #[trace]
-impl Iterator for TopoWalker<'_> {
+impl<Find, E> Iterator for TopoWalker<Find, E>
+where
+    Find:
+        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
     type Item = Result<ObjectId, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -392,7 +386,8 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("first-test").unwrap();
         let t = TopoWalker::new(
-            &r,
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
             std::iter::empty::<gix::ObjectId>(),
         )
@@ -410,7 +405,8 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let t = TopoWalker::new(
-            &r,
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
             std::iter::empty::<gix::ObjectId>(),
         )
@@ -428,8 +424,13 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("first-test").unwrap();
         let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = TopoWalker::new(&r, std::iter::once(tip), std::iter::once(end)).unwrap();
-
+        let t = TopoWalker::new(
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
+            std::iter::once(tip),
+            std::iter::once(end),
+        )
+        .unwrap();
         let mine = t
             .map(|id| id.unwrap().to_hex().to_string())
             .collect::<Vec<_>>();
@@ -442,7 +443,13 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = TopoWalker::new(&r, std::iter::once(tip), std::iter::once(end)).unwrap();
+        let t = TopoWalker::new(
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
+            std::iter::once(tip),
+            std::iter::once(end),
+        )
+        .unwrap();
 
         let mine = t
             .map(|id| id.unwrap().to_hex().to_string())
@@ -456,7 +463,13 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("8bf8780").unwrap();
-        let t = TopoWalker::new(&r, std::iter::once(tip), std::iter::once(end)).unwrap();
+        let t = TopoWalker::new(
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
+            std::iter::once(tip),
+            std::iter::once(end),
+        )
+        .unwrap();
 
         let mine = t
             .map(|id| id.unwrap().to_hex().to_string())
@@ -470,7 +483,13 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("bb48275").unwrap();
-        let t = TopoWalker::new(&r, std::iter::once(tip), std::iter::once(end)).unwrap();
+        let t = TopoWalker::new(
+            r.commit_graph().unwrap(),
+            |id, buf| r.objects.find_commit_iter(id, buf),
+            std::iter::once(tip),
+            std::iter::once(end),
+        )
+        .unwrap();
 
         let mine = t
             .map(|id| id.unwrap().to_hex().to_string())

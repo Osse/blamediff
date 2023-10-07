@@ -540,7 +540,8 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
     }
 
     let topo_walker = topo::TopoWalker::new(
-        &repo,
+        repo.commit_graph()?,
+        move |id, buf| repo.objects.find_commit_iter(id, buf),
         std::iter::once(start),
         std::iter::empty::<gix::ObjectId>(),
     )?;
