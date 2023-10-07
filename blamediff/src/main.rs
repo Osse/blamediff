@@ -539,7 +539,7 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
         my_gen_numbers.insert(ObjectId::from(c.id()), c.generation());
     }
 
-    let topo_walker = topo::TopoWalker::on_repo(
+    let topo_walker = topo::TopoWalker::new(
         &repo,
         std::iter::once(start),
         std::iter::empty::<gix::ObjectId>(),
