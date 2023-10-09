@@ -370,7 +370,37 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn run_git_rev_list(args: &[&str]) -> Vec<String> {
+    macro_rules! topo_test {
+        ($test_name:ident, $range:literal) => {
+            #[test]
+            fn $test_name() {
+                let repo = gix::discover(".").unwrap();
+                let range = repo.rev_parse($range).expect("valid range").detach();
+
+                use gix_revision::Spec;
+                let (start, end) = match range {
+                    Spec::Include(oid) => (oid, None),
+                    Spec::Range { from, to } => (to, Some(from)),
+                    _ => panic!("lol"),
+                };
+
+                let walk = Walk::new(
+                    repo.commit_graph().unwrap(),
+                    |id, buf| repo.objects.find_commit_iter(id, buf),
+                    std::iter::once(start),
+                    end.map(|e| std::iter::once(e)),
+                )
+                .unwrap();
+
+                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                let fasit = run_git_rev_list(&[$range]);
+
+                assert_eq(&mine, &fasit);
+            }
+        };
+    }
+
+    fn run_git_rev_list(args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
             .args(["rev-list", "--topo-order"])
             .args(args)
@@ -378,9 +408,11 @@ mod tests {
             .expect("able to run git rev-list")
             .stdout;
 
-        let output = std::str::from_utf8(&output).expect("valid UTF-8");
-
-        output.split_terminator('\n').map(String::from).collect()
+        output[..output.len() - 1] // Compensate for trailing newline. Only str has split_terminator()
+            .split(|c| *c == b'\n')
+            .map(gix::ObjectId::from_hex)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rev-list returns valid object ids")
     }
 
     #[test]
@@ -395,11 +427,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["first-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 
     #[test]
@@ -414,11 +444,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["second-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 
     #[test]
@@ -433,11 +461,10 @@ mod tests {
             Some(std::iter::once(end)),
         )
         .unwrap();
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["6a30c80..first-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 
     #[test]
@@ -453,11 +480,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["6a30c80..second-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 
     #[test]
@@ -473,11 +498,9 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["8bf8780..second-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 
     #[test]
@@ -493,10 +516,8 @@ mod tests {
         )
         .unwrap();
 
-        let mine = t
-            .map(|id| id.unwrap().to_hex().to_string())
-            .collect::<Vec<_>>();
+        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
         let fasit = run_git_rev_list(&["bb48275..second-test"]);
-        assert_eq!(mine, fasit);
+        assert_eq!(&mine, &fasit);
     }
 }
