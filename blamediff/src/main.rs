@@ -539,16 +539,16 @@ fn cmd_log(la: LogArgs) -> anyhow::Result<()> {
         my_gen_numbers.insert(ObjectId::from(c.id()), c.generation());
     }
 
-    let topo_walker = topo::TopoWalker::new(
-        repo.commit_graph()?,
-        move |id, buf| repo.objects.find_commit_iter(id, buf),
-        std::iter::once(start),
-        std::iter::empty::<gix::ObjectId>(),
-    )?;
+    // let topo_walker = topo::Walk::new(
+    //     repo.commit_graph()?,
+    //     move |id, buf| repo.objects.find_commit_iter(id, buf),
+    //     std::iter::once(start),
+    //     None,
+    // )?;
 
-    for c in topo_walker {
-        println!("{}", c?.to_hex());
-    }
+    // for c in topo_walker {
+    //     println!("{}", c?.to_hex());
+    // }
 
     Ok(())
 }
