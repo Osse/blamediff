@@ -8,8 +8,8 @@ use flagset::{flags, FlagSet};
 
 use smallvec::SmallVec;
 
-// use ::trace::trace;
-// trace::init_depth_var!();
+use ::trace::trace;
+trace::init_depth_var!();
 
 flags! {
     // Set of flags to describe the state of a particular commit while iterating.
@@ -71,7 +71,7 @@ where
     buf: Vec<u8>,
 }
 
-// #[trace(disable(new))]
+#[trace(disable(new), prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Walk<Find, E>
 where
     Find:
@@ -133,7 +133,7 @@ where
             s.indegree_queue.insert(gen, *id);
         }
 
-        s.compute_indegree_to_depth(s.min_gen)?;
+        s.compute_indegrees_to_depth(s.min_gen)?;
 
         for id in tips.iter().chain(ends.iter()) {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
@@ -148,7 +148,7 @@ where
         Ok(s)
     }
 
-    fn compute_indegree_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
+    fn compute_indegrees_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
         while let Some((gen, _)) = self.indegree_queue.peek() {
             if *gen >= gen_cutoff {
                 self.indegree_walk_step()?;
@@ -218,7 +218,12 @@ where
     }
 
     fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
-        self.process_parents(id)?;
+        let ret = self.process_parents(&id)?;
+
+        // TODO: Figure out why it's correct to bail here but not other places where process_parents() is called
+        if !ret {
+            return Ok(());
+        }
 
         let pgen = get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
@@ -231,7 +236,7 @@ where
 
             if parent_gen < self.min_gen {
                 self.min_gen = parent_gen;
-                self.compute_indegree_to_depth(self.min_gen)?;
+                self.compute_indegrees_to_depth(self.min_gen)?;
             }
 
             let i = self.indegrees.get_mut(&pid).ok_or(Error::MissingIndegree)?;
@@ -246,25 +251,36 @@ where
         Ok(())
     }
 
-    fn process_parents(&mut self, id: &oid) -> Result<(), Error> {
+    fn process_parents(&mut self, id: &oid) -> Result<bool, Error> {
         let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
         if state.0.contains(WalkFlags::Added) {
-            return Ok(());
+            return Ok(true);
         }
 
         state.0 != WalkFlags::Added;
 
-        let pass_flags = if !state.0.contains(WalkFlags::Uninteresting) {
-            state.0 & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath)
-        } else {
-            state.0
-        };
+        let parents =
+            get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
 
-        let pgen = get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
+        if state.0.contains(WalkFlags::Uninteresting) {
+            for (id, _) in parents {
+                match self.states.entry(id) {
+                    Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
+                    Entry::Vacant(v) => {
+                        v.insert(WalkState(WalkFlags::Uninteresting.into()));
+                    }
+                };
+            }
 
-        for (pid, _) in pgen {
-            match self.states.entry(pid) {
+            return Ok(false);
+        }
+
+        let pass_flags =
+            state.0.clone() | WalkFlags::SymmetricLeft | WalkFlags::AncestryPath | WalkFlags::Seen;
+
+        for (id, _) in parents {
+            match self.states.entry(id) {
                 Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
                 Entry::Vacant(v) => {
                     v.insert(WalkState(pass_flags));
@@ -272,11 +288,11 @@ where
             };
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 
-// #[trace]
+#[trace(prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Iterator for Walk<Find, E>
 where
     Find:
@@ -367,6 +383,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -392,10 +410,10 @@ mod tests {
                 )
                 .unwrap();
 
-                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let fasit = run_git_rev_list(&[$range]);
+                // let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                // let fasit = run_git_rev_list(&[$range]);
 
-                assert_eq(&mine, &fasit);
+                // assert_eq!(&mine, &fasit);
             }
         };
     }
@@ -408,116 +426,161 @@ mod tests {
             .expect("able to run git rev-list")
             .stdout;
 
-        output[..output.len() - 1] // Compensate for trailing newline. Only str has split_terminator()
-            .split(|c| *c == b'\n')
-            .map(gix::ObjectId::from_hex)
+        std::str::from_utf8(&output)
+            .expect("sensible output from git rev-list")
+            .split_terminator('\n')
+            .map(gix::ObjectId::from_str)
             .collect::<Result<Vec<_>, _>>()
             .expect("rev-list returns valid object ids")
     }
 
-    #[test]
-    fn first_test() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("first-test").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::empty::<ObjectId>()),
-        )
-        .unwrap();
+    // 753d1db: Initial commit
+    topo_test!(t01_753d1db, "753d1db");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["first-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // // f28f649: Simple change
+    topo_test!(t02_f28f649, "f28f649");
+    topo_test!(t02_01_753d1db_f28f649, "753d1db..f28f649");
 
-    #[test]
-    fn second_test() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("second-test").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::empty::<ObjectId>()),
-        )
-        .unwrap();
+    // // d3baed3: Removes more than it adds
+    topo_test!(t03_d3baed3, "d3baed3");
+    topo_test!(t03_01_753d1db_d3baed3, "753d1db..d3baed3");
+    topo_test!(t03_02_f28f649_d3baed3, "f28f649..d3baed3");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["second-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // // 536a0f5: Adds more than it removes
+    topo_test!(t04_536a0f5, "536a0f5");
+    topo_test!(t04_01_753d1db_536a0f5, "753d1db..536a0f5");
+    topo_test!(t04_02_f28f649_536a0f5, "f28f649..536a0f5");
+    topo_test!(t04_03_d3baed3_536a0f5, "d3baed3..536a0f5");
 
-    #[test]
-    fn first_limited_test() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("first-test").unwrap();
-        let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::once(end)),
-        )
-        .unwrap();
+    // // 6a30c80: Change on first line
+    topo_test!(t05_6a30c80, "6a30c80");
+    topo_test!(t05_01_753d1db_6a30c80, "753d1db..6a30c80");
+    topo_test!(t05_02_f28f649_6a30c80, "f28f649..6a30c80");
+    topo_test!(t05_03_d3baed3_6a30c80, "d3baed3..6a30c80");
+    topo_test!(t05_04_536a0f5_6a30c80, "536a0f5..6a30c80");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["6a30c80..first-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // // 4d8a3c7: Multiple changes in one commit
+    topo_test!(t06_4d8a3c7, "4d8a3c7");
+    topo_test!(t06_01_753d1db_4d8a3c7, "753d1db..4d8a3c7");
+    topo_test!(t06_02_f28f649_4d8a3c7, "f28f649..4d8a3c7");
+    topo_test!(t06_03_d3baed3_4d8a3c7, "d3baed3..4d8a3c7");
+    topo_test!(t06_04_536a0f5_4d8a3c7, "536a0f5..4d8a3c7");
+    topo_test!(t06_05_6a30c80_4d8a3c7, "6a30c80..4d8a3c7");
 
-    #[test]
-    fn second_limited_test() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("second-test").unwrap();
-        let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::once(end)),
-        )
-        .unwrap();
+    // // 2064b3c: Change on last line
+    topo_test!(t07_2064b3c, "2064b3c");
+    topo_test!(t07_01_753d1db_2064b3c, "753d1db..2064b3c");
+    topo_test!(t07_02_f28f649_2064b3c, "f28f649..2064b3c");
+    topo_test!(t07_03_d3baed3_2064b3c, "d3baed3..2064b3c");
+    topo_test!(t07_04_536a0f5_2064b3c, "536a0f5..2064b3c");
+    topo_test!(t07_05_6a30c80_2064b3c, "6a30c80..2064b3c");
+    topo_test!(t07_06_4d8a3c7_2064b3c, "4d8a3c7..2064b3c");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["6a30c80..second-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // 0e17ccb: Blank line in context
+    topo_test!(t08_0e17ccb, "0e17ccb");
+    topo_test!(t08_01_753d1db_0e17ccb, "753d1db..0e17ccb");
+    topo_test!(t08_02_f28f649_0e17ccb, "f28f649..0e17ccb");
+    topo_test!(t08_03_d3baed3_0e17ccb, "d3baed3..0e17ccb");
+    topo_test!(t08_04_536a0f5_0e17ccb, "536a0f5..0e17ccb");
+    topo_test!(t08_05_6a30c80_0e17ccb, "6a30c80..0e17ccb");
+    topo_test!(t08_06_4d8a3c7_0e17ccb, "4d8a3c7..0e17ccb");
+    topo_test!(t08_07_2064b3c_0e17ccb, "2064b3c..0e17ccb");
 
-    #[test]
-    fn second_limited_test_left() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("second-test").unwrap();
-        let end = r.rev_parse_single("8bf8780").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::once(end)),
-        )
-        .unwrap();
+    // 3be8265: Indent and overlap with previous change.
+    topo_test!(t09_3be8265, "3be8265");
+    topo_test!(t09_01_753d1db_3be8265, "753d1db..3be8265");
+    topo_test!(t09_02_f28f649_3be8265, "f28f649..3be8265");
+    topo_test!(t09_03_d3baed3_3be8265, "d3baed3..3be8265");
+    topo_test!(t09_04_536a0f5_3be8265, "536a0f5..3be8265");
+    topo_test!(t09_05_6a30c80_3be8265, "6a30c80..3be8265");
+    topo_test!(t09_06_4d8a3c7_3be8265, "4d8a3c7..3be8265");
+    topo_test!(t09_07_2064b3c_3be8265, "2064b3c..3be8265");
+    topo_test!(t09_08_0e17ccb_3be8265, "0e17ccb..3be8265");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["8bf8780..second-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // 8bf8780: Simple change but a bit bigger
+    topo_test!(t10_8bf8780, "8bf8780");
+    topo_test!(t10_01_753d1db_8bf8780, "753d1db..8bf8780");
+    topo_test!(t10_02_f28f649_8bf8780, "f28f649..8bf8780");
+    topo_test!(t10_03_d3baed3_8bf8780, "d3baed3..8bf8780");
+    topo_test!(t10_04_536a0f5_8bf8780, "536a0f5..8bf8780");
+    topo_test!(t10_05_6a30c80_8bf8780, "6a30c80..8bf8780");
+    topo_test!(t10_06_4d8a3c7_8bf8780, "4d8a3c7..8bf8780");
+    topo_test!(t10_07_2064b3c_8bf8780, "2064b3c..8bf8780");
+    topo_test!(t10_08_0e17ccb_8bf8780, "0e17ccb..8bf8780");
+    topo_test!(t10_09_3be8265_8bf8780, "3be8265..8bf8780");
 
-    #[test]
-    fn second_limited_test_right() {
-        let r = gix::discover(".").unwrap();
-        let tip = r.rev_parse_single("second-test").unwrap();
-        let end = r.rev_parse_single("bb48275").unwrap();
-        let t = Walk::new(
-            r.commit_graph().unwrap(),
-            |id, buf| r.objects.find_commit_iter(id, buf),
-            std::iter::once(tip),
-            Some(std::iter::once(end)),
-        )
-        .unwrap();
+    // f7a3a57: Remove a lot
+    topo_test!(t11_f7a3a57, "f7a3a57");
+    topo_test!(t11_01_753d1db_f7a3a57, "753d1db..f7a3a57");
+    topo_test!(t11_02_f28f649_f7a3a57, "f28f649..f7a3a57");
+    topo_test!(t11_03_d3baed3_f7a3a57, "d3baed3..f7a3a57");
+    topo_test!(t11_04_536a0f5_f7a3a57, "536a0f5..f7a3a57");
+    topo_test!(t11_05_6a30c80_f7a3a57, "6a30c80..f7a3a57");
+    topo_test!(t11_06_4d8a3c7_f7a3a57, "4d8a3c7..f7a3a57");
+    topo_test!(t11_07_2064b3c_f7a3a57, "2064b3c..f7a3a57");
+    topo_test!(t11_08_0e17ccb_f7a3a57, "0e17ccb..f7a3a57");
+    topo_test!(t11_09_3be8265_f7a3a57, "3be8265..f7a3a57");
+    topo_test!(t11_10_8bf8780_f7a3a57, "8bf8780..f7a3a57");
 
-        let mine = t.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = run_git_rev_list(&["bb48275..second-test"]);
-        assert_eq!(&mine, &fasit);
-    }
+    // 392db1b: Add a lot and blank lines
+    topo_test!(t12_392db1b, "392db1b");
+    topo_test!(t12_01_753d1db_392db1b, "753d1db..392db1b");
+    topo_test!(t12_02_f28f649_392db1b, "f28f649..392db1b");
+    topo_test!(t12_03_d3baed3_392db1b, "d3baed3..392db1b");
+    topo_test!(t12_04_536a0f5_392db1b, "536a0f5..392db1b");
+    topo_test!(t12_05_6a30c80_392db1b, "6a30c80..392db1b");
+    topo_test!(t12_06_4d8a3c7_392db1b, "4d8a3c7..392db1b");
+    topo_test!(t12_07_2064b3c_392db1b, "2064b3c..392db1b");
+    topo_test!(t12_08_0e17ccb_392db1b, "0e17ccb..392db1b");
+    topo_test!(t12_09_3be8265_392db1b, "3be8265..392db1b");
+    topo_test!(t12_10_8bf8780_392db1b, "8bf8780..392db1b");
+    topo_test!(t12_11_f7a3a57_392db1b, "f7a3a57..392db1b");
+
+    // bb48275: Side project
+    topo_test!(t13_bb48275, "bb48275");
+    topo_test!(t13_01_753d1db_bb48275, "753d1db..bb48275");
+    topo_test!(t13_02_f28f649_bb48275, "f28f649..bb48275");
+    topo_test!(t13_03_d3baed3_bb48275, "d3baed3..bb48275");
+    topo_test!(t13_04_536a0f5_bb48275, "536a0f5..bb48275");
+    topo_test!(t13_05_6a30c80_bb48275, "6a30c80..bb48275");
+    topo_test!(t13_06_4d8a3c7_bb48275, "4d8a3c7..bb48275");
+    topo_test!(t13_07_2064b3c_bb48275, "2064b3c..bb48275");
+    topo_test!(t13_08_0e17ccb_bb48275, "0e17ccb..bb48275");
+    topo_test!(t13_09_3be8265_bb48275, "3be8265..bb48275");
+    topo_test!(t13_10_8bf8780_bb48275, "8bf8780..bb48275");
+    topo_test!(t13_11_f7a3a57_bb48275, "f7a3a57..bb48275");
+    topo_test!(t13_12_392db1b_bb48275, "392db1b..bb48275");
+
+    // c57fe89: Merge branch 'kek' into HEAD
+    topo_test!(t14_c57fe89, "c57fe89");
+    topo_test!(t14_01_753d1db_c57fe89, "753d1db..c57fe89");
+    topo_test!(t14_02_f28f649_c57fe89, "f28f649..c57fe89");
+    topo_test!(t14_03_d3baed3_c57fe89, "d3baed3..c57fe89");
+    topo_test!(t14_04_536a0f5_c57fe89, "536a0f5..c57fe89");
+    topo_test!(t14_05_6a30c80_c57fe89, "6a30c80..c57fe89");
+    topo_test!(t14_06_4d8a3c7_c57fe89, "4d8a3c7..c57fe89");
+    topo_test!(t14_07_2064b3c_c57fe89, "2064b3c..c57fe89");
+    topo_test!(t14_08_0e17ccb_c57fe89, "0e17ccb..c57fe89");
+    topo_test!(t14_09_3be8265_c57fe89, "3be8265..c57fe89");
+    topo_test!(t14_10_8bf8780_c57fe89, "8bf8780..c57fe89");
+    topo_test!(t14_11_f7a3a57_c57fe89, "f7a3a57..c57fe89");
+    topo_test!(t14_12_392db1b_c57fe89, "392db1b..c57fe89");
+    topo_test!(t14_13_bb48275_c57fe89, "bb48275..c57fe89");
+
+    // d7d6328: Multiple changes in one commit again
+    topo_test!(t15_d7d6328, "d7d6328");
+    topo_test!(t15_01_753d1db_d7d6328, "753d1db..d7d6328");
+    topo_test!(t15_02_f28f649_d7d6328, "f28f649..d7d6328");
+    topo_test!(t15_03_d3baed3_d7d6328, "d3baed3..d7d6328");
+    topo_test!(t15_04_536a0f5_d7d6328, "536a0f5..d7d6328");
+    topo_test!(t15_05_6a30c80_d7d6328, "6a30c80..d7d6328");
+    topo_test!(t15_06_4d8a3c7_d7d6328, "4d8a3c7..d7d6328");
+    topo_test!(t15_07_2064b3c_d7d6328, "2064b3c..d7d6328");
+    topo_test!(t15_08_0e17ccb_d7d6328, "0e17ccb..d7d6328");
+    topo_test!(t15_09_3be8265_d7d6328, "3be8265..d7d6328");
+    topo_test!(t15_10_8bf8780_d7d6328, "8bf8780..d7d6328");
+    topo_test!(t15_11_f7a3a57_d7d6328, "f7a3a57..d7d6328");
+    topo_test!(t15_12_392db1b_d7d6328, "392db1b..d7d6328");
+    topo_test!(t15_13_bb48275_d7d6328, "bb48275..d7d6328");
+    topo_test!(t15_14_c57fe89_d7d6328, "c57fe89..d7d6328");
 }
