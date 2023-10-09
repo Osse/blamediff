@@ -83,13 +83,13 @@ where
     /// ^bottom... tips...`
     pub fn new(
         commit_graph: gix_commitgraph::Graph,
-        find: Find,
+        f: Find,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
-        ends: impl IntoIterator<Item = impl Into<ObjectId>>,
+        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
     ) -> Result<Self, Error> {
         let mut s = Self {
             commit_graph,
-            find,
+            find: f,
             indegrees: IdMap::default(),
             states: IdMap::default(),
             explore_queue: PriorityQueue::new(),
@@ -103,7 +103,9 @@ where
         let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
 
         let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
-        let ends = ends.into_iter().map(Into::into).collect::<Vec<_>>();
+        let ends = ends
+            .map(|e| e.into_iter().map(Into::into).collect::<Vec<_>>())
+            .unwrap_or_default();
 
         for (id, flags) in tips
             .iter()
@@ -112,7 +114,7 @@ where
         {
             *s.indegrees.entry(*id).or_default() = 1;
 
-            let commit = crate::topo::find(&s.commit_graph, &mut s.find, id, &mut s.buf)
+            let commit = find(&s.commit_graph, &mut s.find, id, &mut s.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
             let gen = match commit {
@@ -389,7 +391,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::empty::<gix::ObjectId>(),
+            Some(std::iter::empty::<ObjectId>()),
         )
         .unwrap();
 
@@ -408,7 +410,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::empty::<gix::ObjectId>(),
+            Some(std::iter::empty::<ObjectId>()),
         )
         .unwrap();
 
@@ -428,7 +430,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::once(end),
+            Some(std::iter::once(end)),
         )
         .unwrap();
         let mine = t
@@ -447,7 +449,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::once(end),
+            Some(std::iter::once(end)),
         )
         .unwrap();
 
@@ -467,7 +469,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::once(end),
+            Some(std::iter::once(end)),
         )
         .unwrap();
 
@@ -487,7 +489,7 @@ mod tests {
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
-            std::iter::once(end),
+            Some(std::iter::once(end)),
         )
         .unwrap();
 
