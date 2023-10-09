@@ -53,8 +53,8 @@ struct WalkState(FlagSet<WalkFlags>);
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
 /// necessarily up to date.
-// pub struct TopoWalker<'repo> {
-pub struct TopoWalker<Find, E>
+// pub struct Walk<'repo> {
+pub struct Walk<Find, E>
 where
     Find:
         for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -71,14 +71,14 @@ where
     buf: Vec<u8>,
 }
 
-// #[trace(disable(on_repo))]
-impl<Find, E> TopoWalker<Find, E>
+// #[trace(disable(new))]
+impl<Find, E> Walk<Find, E>
 where
     Find:
         for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    /// Create a new TopoWalker that walks the given repository, starting at the
+    /// Create a new Walk that walks the given repository, starting at the
     /// tips and ending at the bottoms. Like `git rev-list --topo-order
     /// ^bottom... tips...`
     pub fn new(
@@ -275,7 +275,7 @@ where
 }
 
 // #[trace]
-impl<Find, E> Iterator for TopoWalker<Find, E>
+impl<Find, E> Iterator for Walk<Find, E>
 where
     Find:
         for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -385,7 +385,7 @@ mod tests {
     fn first_test() {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("first-test").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
@@ -404,7 +404,7 @@ mod tests {
     fn second_test() {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
@@ -424,7 +424,7 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("first-test").unwrap();
         let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
@@ -443,7 +443,7 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("6a30c80").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
@@ -463,7 +463,7 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("8bf8780").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
@@ -483,7 +483,7 @@ mod tests {
         let r = gix::discover(".").unwrap();
         let tip = r.rev_parse_single("second-test").unwrap();
         let end = r.rev_parse_single("bb48275").unwrap();
-        let t = TopoWalker::new(
+        let t = Walk::new(
             r.commit_graph().unwrap(),
             |id, buf| r.objects.find_commit_iter(id, buf),
             std::iter::once(tip),
