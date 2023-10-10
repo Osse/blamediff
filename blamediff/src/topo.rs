@@ -114,7 +114,7 @@ where
         {
             *s.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(&s.commit_graph, &mut s.find, id, &mut s.buf)
+            let commit = find(Some(&s.commit_graph), &mut s.find, id, &mut s.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
             let gen = match commit {
@@ -165,7 +165,7 @@ where
             self.explore_to_depth(gen)?;
 
             let pgen =
-                get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
+                collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
 
             for (pid, gen) in pgen {
                 self.indegrees
@@ -202,7 +202,7 @@ where
             self.process_parents(&id)?;
 
             let pgen =
-                get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
+                collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
 
             for (pid, gen) in pgen {
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
@@ -225,7 +225,7 @@ where
             return Ok(());
         }
 
-        let pgen = get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
+        let pgen = collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
 
         for (pid, parent_gen) in pgen {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
@@ -261,7 +261,7 @@ where
         state.0 != WalkFlags::Added;
 
         let parents =
-            get_parent_generations(&self.commit_graph, &mut self.find, &id, &mut self.buf)?;
+            collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
 
         if state.0.contains(WalkFlags::Uninteresting) {
             for (id, _) in parents {
@@ -329,25 +329,25 @@ enum Either<'buf, 'cache> {
     CachedCommit(gix_commitgraph::file::Commit<'cache>),
 }
 
-fn find<'b, 'g, Find, E>(
-    commit_graph: &'g gix_commitgraph::Graph,
+fn find<'cache, 'buf, Find, E>(
+    cache: Option<&'cache gix_commitgraph::Graph>,
     mut find: Find,
     id: &oid,
-    buf: &'b mut Vec<u8>,
-) -> Result<Either<'b, 'g>, E>
+    buf: &'buf mut Vec<u8>,
+) -> Result<Either<'buf, 'cache>, E>
 where
     Find:
         for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    match commit_graph.commit_by_id(id).map(Either::CachedCommit) {
+    match cache.and_then(|cache| cache.commit_by_id(id).map(Either::CachedCommit)) {
         Some(c) => Ok(c),
         None => (find)(id, buf).map(Either::CommitRefIter),
     }
 }
 
-fn get_parent_generations<'b, 'g, Find, E>(
-    commit_graph: &'g gix_commitgraph::Graph,
+fn collect_parents<'b, Find, E>(
+    cache: Option<&gix_commitgraph::Graph>,
     f: Find,
     id: &oid,
     buf: &'b mut Vec<u8>,
@@ -358,7 +358,7 @@ where
 {
     let mut pgen = SmallVec::new();
 
-    match find(commit_graph, f, &id, buf).map_err(|err| Error::CommitNotFound)? {
+    match find(cache, f, &id, buf).map_err(|err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 match token {
@@ -371,7 +371,9 @@ where
         }
         Either::CachedCommit(c) => {
             for p in c.iter_parents() {
-                let parent_commit = commit_graph.commit_at(p?);
+                let parent_commit = cache
+                    .expect("cache exists if CachedCommit was returned")
+                    .commit_at(p?);
                 let pid = ObjectId::from(parent_commit.id());
                 pgen.push((pid, parent_commit.generation()));
             }
