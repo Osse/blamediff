@@ -49,8 +49,8 @@ pub enum Error {
     ObjectDecode(#[from] gix_object::decode::Error),
 }
 
-#[derive(Debug)]
-struct WalkState(FlagSet<WalkFlags>);
+// #[derive(Debug)]
+type WalkState = FlagSet<WalkFlags>;
 
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
@@ -126,7 +126,7 @@ where
                 s.min_gen = gen;
             }
 
-            let state = WalkState(flags | WalkFlags::Explored | WalkFlags::InDegree);
+            let state = flags | WalkFlags::Explored | WalkFlags::InDegree;
 
             s.states.insert(*id, state);
             s.explore_queue.insert(gen, *id);
@@ -138,12 +138,10 @@ where
         for id in &ends {
             let pgen = collect_parents(Some(&s.commit_graph), &s.find, &id, &mut s.buf)?;
             for (id, _) in pgen {
-                match s.states.entry(id) {
-                    Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
-                    Entry::Vacant(v) => {
-                        v.insert(WalkState(WalkFlags::Uninteresting | WalkFlags::Seen));
-                    }
-                };
+                s.states
+                    .entry(id)
+                    .and_modify(|s| *s |= WalkFlags::Uninteresting)
+                    .or_insert(WalkFlags::Uninteresting | WalkFlags::Seen);
             }
         }
 
@@ -190,8 +188,8 @@ where
 
                 let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
-                if !state.0.contains(WalkFlags::InDegree) {
-                    state.0 |= WalkFlags::InDegree;
+                if !state.contains(WalkFlags::InDegree) {
+                    *state |= WalkFlags::InDegree;
                     self.indegree_queue.insert(gen, id.into());
                 }
             }
@@ -221,8 +219,8 @@ where
             for (pid, gen) in pgen {
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
 
-                if !state.0.contains(WalkFlags::Explored) {
-                    state.0 |= WalkFlags::Explored;
+                if !state.contains(WalkFlags::Explored) {
+                    *state |= WalkFlags::Explored;
                     self.explore_queue.insert(gen, pid.into());
                 }
             }
@@ -239,7 +237,7 @@ where
         for (pid, parent_gen) in pgen {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
 
-            if parent_state.0.contains(WalkFlags::Uninteresting) {
+            if parent_state.contains(WalkFlags::Uninteresting) {
                 continue;
             }
 
@@ -261,49 +259,31 @@ where
     }
 
     fn process_parents(&mut self, id: &oid) -> Result<(), Error> {
-        match self.states.get_mut(id).ok_or(Error::MissingState) {
-            Ok(s) => {
-                if s.0.contains(WalkFlags::Added) {
-                    return Ok(());
-                } else {
-                    s.0 |= WalkFlags::Added;
-                }
-            }
-            Err(e) => return Err(e),
-        };
+        let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
-        let state = self
-            .states
-            .get(id)
-            .map(|s| s.0)
-            .ok_or(Error::MissingState)?;
-
-        let parents = self.collect_parents(&id)?;
-
-        if state.contains(WalkFlags::Uninteresting) {
-            for (id, _) in parents {
-                match self.states.entry(id) {
-                    Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
-                    Entry::Vacant(v) => {
-                        v.insert(WalkState(WalkFlags::Uninteresting.into()));
-                    }
-                };
-            }
-
+        if state.contains(WalkFlags::Added) {
             return Ok(());
         }
 
-        let pass_flags = state & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+        *state |= WalkFlags::Added;
+
+        // If the current commit is uninteresting we pass that on to parents,
+        // otherwise we pass SymmetricLeft and AncestryPath + Seen
+        let (pass, insert) = if state.contains(WalkFlags::Uninteresting) {
+            let flags = WalkFlags::Uninteresting.into();
+            (flags, flags)
+        } else {
+            let flags = *state & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+            (flags, flags | WalkFlags::Seen)
+        };
+
+        let parents = self.collect_parents(&id)?;
 
         for (id, _) in parents {
-            match self.states.entry(id) {
-                Entry::Occupied(mut o) => {
-                    o.get_mut().0 |= pass_flags;
-                }
-                Entry::Vacant(v) => {
-                    v.insert(WalkState(pass_flags | WalkFlags::Seen));
-                }
-            };
+            self.states
+                .entry(id)
+                .and_modify(|s| *s |= pass)
+                .or_insert(insert);
         }
 
         Ok(())
