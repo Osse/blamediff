@@ -14,6 +14,8 @@ trace::init_depth_var!();
 flags! {
     // Set of flags to describe the state of a particular commit while iterating.
     enum WalkFlags: u32 {
+        /// TODO: Unused?
+        Seen,
         /// Commit has been processed by the Explore walk
         Explored,
         /// Commit has been processed by the Indegree walk
@@ -28,8 +30,6 @@ flags! {
         SymmetricLeft,
         /// TODO:
         AncestryPath,
-        /// TODO: Unused?
-        Seen,
     }
 }
 
@@ -100,7 +100,7 @@ where
         };
 
         let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
-        let tip_flags = WalkFlags::Explored | WalkFlags::InDegree;
+        let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
 
         let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
         let ends = ends
@@ -129,15 +129,44 @@ where
             let state = WalkState(flags);
 
             s.states.insert(*id, state);
-            s.explore_queue.insert(gen, *id);
-            s.indegree_queue.insert(gen, *id);
+
+            test_flag_and_insert(
+                &mut s.explore_queue,
+                gen,
+                id,
+                &mut s.states.get_mut(id).unwrap(),
+                WalkFlags::Explored,
+            );
+            test_flag_and_insert(
+                &mut s.indegree_queue,
+                gen,
+                id,
+                &mut s.states.get_mut(id).unwrap(),
+                WalkFlags::InDegree,
+            );
+        }
+
+        // NOTE: Parents of ends must also be marked uninteresting for some
+        // reason. See handle_commit()
+        for id in &ends {
+            let pgen = collect_parents(Some(&s.commit_graph), &mut s.find, &id, &mut s.buf)?;
+            for (id, _) in pgen {
+                match s.states.entry(id) {
+                    Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
+                    Entry::Vacant(v) => {
+                        v.insert(WalkState(WalkFlags::Uninteresting | WalkFlags::Seen));
+                    }
+                };
+            }
         }
 
         s.compute_indegrees_to_depth(s.min_gen)?;
 
-        for id in tips.iter().chain(ends.iter()) {
+        for id in tips.iter() {
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
+            // NOTE: in Git the ends are also added to the topo_queue, but then
+            // in simplify_commit() Git is told to ignore it. For now my tests pass.
             if i == 1 {
                 s.topo_queue.push(*id);
             }
@@ -167,18 +196,21 @@ where
             let pgen =
                 collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
 
-            for (pid, gen) in pgen {
+            for (id, gen) in pgen {
                 self.indegrees
-                    .entry(pid)
+                    .entry(id)
                     .and_modify(|e| *e += 1)
                     .or_insert(2);
 
-                let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
+                let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
-                if !state.0.contains(WalkFlags::InDegree) {
-                    state.0 |= WalkFlags::InDegree;
-                    self.indegree_queue.insert(gen, pid);
-                }
+                test_flag_and_insert(
+                    &mut self.indegree_queue,
+                    gen,
+                    &id,
+                    state,
+                    WalkFlags::InDegree,
+                );
             }
         }
 
@@ -206,11 +238,13 @@ where
 
             for (pid, gen) in pgen {
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
-
-                if !state.0.contains(WalkFlags::Explored) {
-                    state.0 |= WalkFlags::Explored;
-                    self.explore_queue.insert(gen, pid.into());
-                }
+                test_flag_and_insert(
+                    &mut self.explore_queue,
+                    gen,
+                    &pid,
+                    state,
+                    WalkFlags::Explored,
+                );
             }
         }
 
@@ -258,7 +292,7 @@ where
             return Ok(true);
         }
 
-        state.0 != WalkFlags::Added;
+        state.0 |= WalkFlags::Added;
 
         let parents =
             collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
@@ -276,20 +310,37 @@ where
             return Ok(false);
         }
 
-        let pass_flags =
-            state.0.clone() | WalkFlags::SymmetricLeft | WalkFlags::AncestryPath | WalkFlags::Seen;
+        let pass_flags = state.0.clone() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
 
         for (id, _) in parents {
             match self.states.entry(id) {
-                Entry::Occupied(mut o) => o.get_mut().0 |= pass_flags,
+                Entry::Occupied(mut o) => {
+                    o.get_mut().0 |= pass_flags;
+                }
                 Entry::Vacant(v) => {
-                    v.insert(WalkState(pass_flags));
+                    v.insert(WalkState(pass_flags | WalkFlags::Seen));
                 }
             };
         }
 
         Ok(true)
     }
+}
+
+#[trace(prefix_enter = "", prefix_exit = "", disable(q, gen))]
+fn test_flag_and_insert(
+    q: &mut PriorityQueue<u32, ObjectId>,
+    gen: u32,
+    id: &oid,
+    state: &mut WalkState,
+    flag: WalkFlags,
+) {
+    if state.0.contains(flag) {
+        return;
+    }
+    state.0 |= flag;
+
+    q.insert(gen, id.into());
 }
 
 #[trace(prefix_enter = "", prefix_exit = "")]
@@ -412,10 +463,10 @@ mod tests {
                 )
                 .unwrap();
 
-                // let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                // let fasit = run_git_rev_list(&[$range]);
+                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                let fasit = run_git_rev_list(&[$range]);
 
-                // assert_eq!(&mine, &fasit);
+                assert_eq!(&mine, &fasit, "left = mine, right = fasit");
             }
         };
     }
@@ -439,7 +490,7 @@ mod tests {
     // 753d1db: Initial commit
     topo_test!(t01_753d1db, "753d1db");
 
-    // // f28f649: Simple change
+    // f28f649: Simple change
     topo_test!(t02_f28f649, "f28f649");
     topo_test!(t02_01_753d1db_f28f649, "753d1db..f28f649");
 
@@ -510,6 +561,7 @@ mod tests {
     topo_test!(t10_07_2064b3c_8bf8780, "2064b3c..8bf8780");
     topo_test!(t10_08_0e17ccb_8bf8780, "0e17ccb..8bf8780");
     topo_test!(t10_09_3be8265_8bf8780, "3be8265..8bf8780");
+    topo_test!(t10_10_bb48275_8bf8780, "3be8265..8bf8780");
 
     // f7a3a57: Remove a lot
     topo_test!(t11_f7a3a57, "f7a3a57");
