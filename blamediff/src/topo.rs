@@ -72,7 +72,7 @@ where
     buf: Vec<u8>,
 }
 
-#[trace(disable(new), prefix_enter = "", prefix_exit = "")]
+// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -232,13 +232,7 @@ where
     }
 
     fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
-        let ret = self.process_parents(&id)?;
-
-        // TODO: Figure out why it's correct to bail here but not other places
-        // where process_parents() is called
-        if !ret {
-            return Ok(());
-        }
+        self.process_parents(&id)?;
 
         let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
 
@@ -266,18 +260,27 @@ where
         Ok(())
     }
 
-    fn process_parents(&mut self, id: &oid) -> Result<bool, Error> {
-        let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
+    fn process_parents(&mut self, id: &oid) -> Result<(), Error> {
+        match self.states.get_mut(id).ok_or(Error::MissingState) {
+            Ok(s) => {
+                if s.0.contains(WalkFlags::Added) {
+                    return Ok(());
+                } else {
+                    s.0 |= WalkFlags::Added;
+                }
+            }
+            Err(e) => return Err(e),
+        };
 
-        if state.0.contains(WalkFlags::Added) {
-            return Ok(true);
-        }
+        let state = self
+            .states
+            .get(id)
+            .map(|s| s.0)
+            .ok_or(Error::MissingState)?;
 
-        state.0 |= WalkFlags::Added;
+        let parents = self.collect_parents(&id)?;
 
-        let parents = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
-
-        if state.0.contains(WalkFlags::Uninteresting) {
+        if state.contains(WalkFlags::Uninteresting) {
             for (id, _) in parents {
                 match self.states.entry(id) {
                     Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
@@ -287,10 +290,10 @@ where
                 };
             }
 
-            return Ok(false);
+            return Ok(());
         }
 
-        let pass_flags = state.0.clone() & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
+        let pass_flags = state & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
 
         for (id, _) in parents {
             match self.states.entry(id) {
@@ -303,11 +306,15 @@ where
             };
         }
 
-        Ok(true)
+        Ok(())
+    }
+
+    fn collect_parents(&mut self, id: &oid) -> Result<SmallVec<[(ObjectId, u32); 1]>, Error> {
+        collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)
     }
 }
 
-#[trace(prefix_enter = "", prefix_exit = "")]
+// #[trace(prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Iterator for Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
