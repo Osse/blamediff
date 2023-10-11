@@ -136,8 +136,8 @@ where
         // NOTE: Parents of ends must also be marked uninteresting for some
         // reason. See handle_commit()
         for id in &ends {
-            let pgen = collect_parents(Some(&s.commit_graph), &s.find, &id, &mut s.buf)?;
-            for (id, _) in pgen {
+            let parents = s.collect_parents(id)?;
+            for (id, _) in parents {
                 s.states
                     .entry(id)
                     .and_modify(|s| *s |= WalkFlags::Uninteresting)
@@ -178,9 +178,9 @@ where
         if let Some((gen, id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
-            let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
+            let parents = self.collect_parents(&id)?;
 
-            for (id, gen) in pgen {
+            for (id, gen) in parents {
                 self.indegrees
                     .entry(id)
                     .and_modify(|e| *e += 1)
@@ -190,7 +190,7 @@ where
 
                 if !state.contains(WalkFlags::InDegree) {
                     *state |= WalkFlags::InDegree;
-                    self.indegree_queue.insert(gen, id.into());
+                    self.indegree_queue.insert(gen, id);
                 }
             }
         }
@@ -212,16 +212,16 @@ where
 
     fn explore_walk_step(&mut self) -> Result<(), Error> {
         if let Some((_, id)) = self.explore_queue.pop() {
-            self.process_parents(&id)?;
+            let parents = self.collect_parents(&id)?;
 
-            let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
+            self.process_parents(&id, &parents)?;
 
-            for (pid, gen) in pgen {
-                let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
+            for (id, gen) in parents {
+                let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
                 if !state.contains(WalkFlags::Explored) {
                     *state |= WalkFlags::Explored;
-                    self.explore_queue.insert(gen, pid.into());
+                    self.explore_queue.insert(gen, id);
                 }
             }
         }
@@ -230,11 +230,11 @@ where
     }
 
     fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
-        self.process_parents(&id)?;
+        let parents = self.collect_parents(id)?;
 
-        let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
+        self.process_parents(id, &parents)?;
 
-        for (pid, parent_gen) in pgen {
+        for (pid, parent_gen) in parents {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
 
             if parent_state.contains(WalkFlags::Uninteresting) {
@@ -258,7 +258,7 @@ where
         Ok(())
     }
 
-    fn process_parents(&mut self, id: &oid) -> Result<(), Error> {
+    fn process_parents(&mut self, id: &oid, parents: &[(ObjectId, u32)]) -> Result<(), Error> {
         let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
         if state.contains(WalkFlags::Added) {
@@ -277,11 +277,9 @@ where
             (flags, flags | WalkFlags::Seen)
         };
 
-        let parents = self.collect_parents(&id)?;
-
         for (id, _) in parents {
             self.states
-                .entry(id)
+                .entry(*id)
                 .and_modify(|s| *s |= pass)
                 .or_insert(insert);
         }
@@ -290,7 +288,7 @@ where
     }
 
     fn collect_parents(&mut self, id: &oid) -> Result<SmallVec<[(ObjectId, u32); 1]>, Error> {
-        collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)
+        collect_parents(Some(&self.commit_graph), &self.find, id, &mut self.buf)
     }
 }
 
@@ -356,15 +354,15 @@ where
     Find: for<'a> Fn(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    let mut pgen = SmallVec::<[(ObjectId, u32); 1]>::new();
+    let mut parents = SmallVec::<[(ObjectId, u32); 1]>::new();
 
-    match find(cache, &f, &id, buf).map_err(|err| Error::CommitNotFound)? {
+    match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 match token {
                     Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
                     Ok(gix_object::commit::ref_iter::Token::Parent { id }) => {
-                        pgen.push((id, 0));
+                        parents.push((id, 0)); // Dummy generation number to be filled in
                     }
                     Ok(_past_parents) => break,
                     Err(err) => return Err(err.into()),
@@ -372,29 +370,24 @@ where
             }
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
-            for (id, gen) in pgen.iter_mut() {
-                match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
-                    Either::CommitRefIter(c) => {
-                        *gen = gix_commitgraph::GENERATION_NUMBER_INFINITY;
-                    }
-                    Either::CachedCommit(c) => {
-                        *gen = c.generation();
-                    }
-                }
+            for (id, gen) in parents.iter_mut() {
+                *gen = match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
+                    Either::CommitRefIter(c) => gix_commitgraph::GENERATION_NUMBER_INFINITY,
+                    Either::CachedCommit(c) => c.generation(),
+                };
             }
         }
         Either::CachedCommit(c) => {
-            for p in c.iter_parents() {
+            for pos in c.iter_parents() {
                 let parent_commit = cache
                     .expect("cache exists if CachedCommit was returned")
-                    .commit_at(p?);
-                let pid = ObjectId::from(parent_commit.id());
-                pgen.push((pid, parent_commit.generation()));
+                    .commit_at(pos?);
+                parents.push((parent_commit.id().into(), parent_commit.generation()));
             }
         }
     };
 
-    Ok(pgen)
+    Ok(parents)
 }
 
 #[cfg(test)]
