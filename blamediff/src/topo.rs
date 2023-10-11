@@ -45,6 +45,8 @@ pub enum Error {
     CommitGraphInit(#[from] gix_commitgraph::init::Error),
     #[error("Error doing file stuff: {0}")]
     CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
+    #[error("Error decoding stuff: {0}")]
+    ObjectDecode(#[from] gix_object::decode::Error),
 }
 
 #[derive(Debug)]
@@ -56,8 +58,7 @@ struct WalkState(FlagSet<WalkFlags>);
 // pub struct Walk<'repo> {
 pub struct Walk<Find, E>
 where
-    Find:
-        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     commit_graph: Graph,
@@ -74,8 +75,7 @@ where
 #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Walk<Find, E>
 where
-    Find:
-        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     /// Create a new Walk that walks the given repository, starting at the
@@ -114,7 +114,7 @@ where
         {
             *s.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(Some(&s.commit_graph), &mut s.find, id, &mut s.buf)
+            let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
             let gen = match commit {
@@ -126,30 +126,17 @@ where
                 s.min_gen = gen;
             }
 
-            let state = WalkState(flags);
+            let state = WalkState(flags | WalkFlags::Explored | WalkFlags::InDegree);
 
             s.states.insert(*id, state);
-
-            test_flag_and_insert(
-                &mut s.explore_queue,
-                gen,
-                id,
-                &mut s.states.get_mut(id).unwrap(),
-                WalkFlags::Explored,
-            );
-            test_flag_and_insert(
-                &mut s.indegree_queue,
-                gen,
-                id,
-                &mut s.states.get_mut(id).unwrap(),
-                WalkFlags::InDegree,
-            );
+            s.explore_queue.insert(gen, *id);
+            s.indegree_queue.insert(gen, *id);
         }
 
         // NOTE: Parents of ends must also be marked uninteresting for some
         // reason. See handle_commit()
         for id in &ends {
-            let pgen = collect_parents(Some(&s.commit_graph), &mut s.find, &id, &mut s.buf)?;
+            let pgen = collect_parents(Some(&s.commit_graph), &s.find, &id, &mut s.buf)?;
             for (id, _) in pgen {
                 match s.states.entry(id) {
                     Entry::Occupied(mut o) => o.get_mut().0 |= WalkFlags::Uninteresting,
@@ -193,8 +180,7 @@ where
         if let Some((gen, id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
-            let pgen =
-                collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
+            let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
 
             for (id, gen) in pgen {
                 self.indegrees
@@ -204,13 +190,10 @@ where
 
                 let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
-                test_flag_and_insert(
-                    &mut self.indegree_queue,
-                    gen,
-                    &id,
-                    state,
-                    WalkFlags::InDegree,
-                );
+                if !state.0.contains(WalkFlags::InDegree) {
+                    state.0 |= WalkFlags::InDegree;
+                    self.indegree_queue.insert(gen, id.into());
+                }
             }
         }
 
@@ -233,18 +216,15 @@ where
         if let Some((_, id)) = self.explore_queue.pop() {
             self.process_parents(&id)?;
 
-            let pgen =
-                collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
+            let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
 
             for (pid, gen) in pgen {
                 let state = self.states.get_mut(&pid).ok_or(Error::MissingState)?;
-                test_flag_and_insert(
-                    &mut self.explore_queue,
-                    gen,
-                    &pid,
-                    state,
-                    WalkFlags::Explored,
-                );
+
+                if !state.0.contains(WalkFlags::Explored) {
+                    state.0 |= WalkFlags::Explored;
+                    self.explore_queue.insert(gen, pid.into());
+                }
             }
         }
 
@@ -254,12 +234,13 @@ where
     fn expand_topo_walk(&mut self, id: &oid) -> Result<(), Error> {
         let ret = self.process_parents(&id)?;
 
-        // TODO: Figure out why it's correct to bail here but not other places where process_parents() is called
+        // TODO: Figure out why it's correct to bail here but not other places
+        // where process_parents() is called
         if !ret {
             return Ok(());
         }
 
-        let pgen = collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
+        let pgen = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
 
         for (pid, parent_gen) in pgen {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
@@ -294,8 +275,7 @@ where
 
         state.0 |= WalkFlags::Added;
 
-        let parents =
-            collect_parents(Some(&self.commit_graph), &mut self.find, &id, &mut self.buf)?;
+        let parents = collect_parents(Some(&self.commit_graph), &self.find, &id, &mut self.buf)?;
 
         if state.0.contains(WalkFlags::Uninteresting) {
             for (id, _) in parents {
@@ -327,27 +307,10 @@ where
     }
 }
 
-#[trace(prefix_enter = "", prefix_exit = "", disable(q, gen))]
-fn test_flag_and_insert(
-    q: &mut PriorityQueue<u32, ObjectId>,
-    gen: u32,
-    id: &oid,
-    state: &mut WalkState,
-    flag: WalkFlags,
-) {
-    if state.0.contains(flag) {
-        return;
-    }
-    state.0 |= flag;
-
-    q.insert(gen, id.into());
-}
-
 #[trace(prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Iterator for Walk<Find, E>
 where
-    Find:
-        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Item = Result<ObjectId, Error>;
@@ -382,13 +345,12 @@ enum Either<'buf, 'cache> {
 
 fn find<'cache, 'buf, Find, E>(
     cache: Option<&'cache gix_commitgraph::Graph>,
-    mut find: Find,
+    find: Find,
     id: &oid,
     buf: &'buf mut Vec<u8>,
 ) -> Result<Either<'buf, 'cache>, E>
 where
-    Find:
-        for<'a> FnMut(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     match cache.and_then(|cache| cache.commit_by_id(id).map(Either::CachedCommit)) {
@@ -404,19 +366,33 @@ fn collect_parents<'b, Find, E>(
     buf: &'b mut Vec<u8>,
 ) -> Result<SmallVec<[(ObjectId, u32); 1]>, Error>
 where
-    Find: for<'a> FnMut(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    Find: for<'a> Fn(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    let mut pgen = SmallVec::new();
+    let mut pgen = SmallVec::<[(ObjectId, u32); 1]>::new();
 
-    match find(cache, f, &id, buf).map_err(|err| Error::CommitNotFound)? {
+    match find(cache, &f, &id, buf).map_err(|err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 match token {
+                    Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
                     Ok(gix_object::commit::ref_iter::Token::Parent { id }) => {
-                        pgen.push((id, gix_commitgraph::GENERATION_NUMBER_INFINITY));
+                        pgen.push((id, 0));
                     }
-                    _ => continue,
+                    Ok(_past_parents) => break,
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            // Need to check the cache again. That a commit is not in the cache
+            // doesn't mean a parent is not.
+            for (id, gen) in pgen.iter_mut() {
+                match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
+                    Either::CommitRefIter(c) => {
+                        *gen = gix_commitgraph::GENERATION_NUMBER_INFINITY;
+                    }
+                    Either::CachedCommit(c) => {
+                        *gen = c.generation();
+                    }
                 }
             }
         }
