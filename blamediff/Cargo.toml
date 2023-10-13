@@ -18,6 +18,7 @@ gix-hash = "*"
 gix-hashtable = "*"
 gix-object = "*"
 gix-odb = "*"
+gix-traverse = "*"
 clap = { version = "4.2", features = ["derive"] }
 culpa = { path = "../culpa" }
 anyhow = "1"

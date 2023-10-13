@@ -129,6 +129,7 @@ dependencies = [
  "gix-odb",
  "gix-revision",
  "gix-revwalk",
+ "gix-traverse",
  "pretty_assertions",
  "smallvec",
  "thiserror",

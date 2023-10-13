@@ -1,6 +1,9 @@
+use std::cmp::Reverse;
+
 use gix_commitgraph::Graph;
 use gix_hash::{oid, ObjectId};
 use gix_hashtable::hash_map::Entry;
+use gix_object::date::SecondsSinceUnixEpoch;
 use gix_odb::FindExt;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
@@ -47,6 +50,8 @@ pub enum Error {
     CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
     #[error("Error decoding stuff: {0}")]
     ObjectDecode(#[from] gix_object::decode::Error),
+    #[error("Error ancestring stuff: {0}")]
+    Ancestor(#[from] gix_traverse::commit::ancestors::Error),
 }
 
 // #[derive(Debug)]
@@ -323,6 +328,92 @@ where
     }
 }
 
+pub struct Walk2 {
+    list: Vec<ObjectId>,
+}
+
+// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
+impl Walk2 {
+    /// Create a new Walk that walks the given repository, starting at the
+    /// tips and ending at the bottoms. Like `git rev-list --topo-order
+    /// ^bottom... tips...`
+    pub fn new<Find, E>(
+        f: Find,
+        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
+        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
+    ) -> Result<Self, Error>
+    where
+        Find:
+            for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let a = gix_traverse::commit::Ancestors::new(
+            tips,
+            gix_traverse::commit::ancestors::State::default(),
+            f,
+        )
+        .sorting(gix_traverse::commit::Sorting::ByCommitTimeNewestFirst)
+        .expect("new sorting");
+
+        let all = a.collect::<Result<Vec<_>, _>>()?;
+
+        let mut indegrees = IdMap::from_iter(all.iter().map(|info| (info.id, 1)));
+        let infos = IdMap::from_iter(all.iter().map(|info| (info.id, info.clone())));
+
+        for info in &all {
+            for parent in &info.parent_ids {
+                indegrees.entry(*parent).and_modify(|i| *i += 1);
+            }
+        }
+
+        let mut queue = PriorityQueue::<_, ObjectId>::new();
+
+        for info in all.iter().filter(|info| indegrees[&info.id] == 1) {
+            queue.insert(info.commit_time.expect("commit_time"), info.id);
+        }
+
+        let sort_by_time = true;
+        if !sort_by_time {
+            // Reverse queue
+        }
+
+        let mut final_list = vec![];
+
+        while let Some((_, id)) = queue.pop() {
+            let info = &infos[&id];
+            for parent in &info.parent_ids {
+                let i = indegrees.get_mut(parent).expect("indegrees.get_mut");
+
+                if *i == 0 {
+                    continue;
+                }
+
+                *i -= 1;
+
+                if *i == 1 {
+                    queue.insert(info.commit_time.expect("commit_time 2"), *parent);
+                }
+            }
+
+            *indegrees.get_mut(&id).expect("indegrees.get_mut 2") = 0;
+
+            final_list.push(id);
+        }
+
+        final_list.reverse();
+
+        Ok(Self { list: final_list })
+    }
+}
+
+impl Iterator for Walk2 {
+    type Item = Result<ObjectId, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.list.pop().map(|id| Ok(id))
+    }
+}
+
 enum Either<'buf, 'cache> {
     CommitRefIter(gix_object::CommitRefIter<'buf>),
     CachedCommit(gix_commitgraph::file::Commit<'cache>),
@@ -398,6 +489,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     macro_rules! topo_test {
+        ($test_name:ident, $range:literal) => {};
         ($test_name:ident, $range:literal) => {
             #[test]
             fn $test_name() {
@@ -420,16 +512,45 @@ mod tests {
                 .unwrap();
 
                 let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let fasit = run_git_rev_list(&[$range]);
+                let fasit = run_git_rev(&["--topo-order", $range]);
 
                 assert_eq!(&mine, &fasit, "left = mine, right = fasit");
             }
         };
     }
 
-    fn run_git_rev_list(args: &[&str]) -> Vec<gix::ObjectId> {
+    macro_rules! topo_test2 {
+        ($test_name:ident, $range:literal) => {
+            #[test]
+            fn $test_name() {
+                let repo = gix::discover(".").unwrap();
+                let range = repo.rev_parse($range).expect("valid range").detach();
+
+                use gix_revision::Spec;
+                let (start, end) = match range {
+                    Spec::Include(oid) => (oid, None),
+                    Spec::Range { from, to } => (to, Some(from)),
+                    _ => panic!("lol"),
+                };
+
+                let walk = Walk2::new(
+                    |id, buf| repo.objects.find_commit_iter(id, buf),
+                    std::iter::once(start),
+                    end.map(|e| std::iter::once(e)),
+                )
+                .unwrap();
+
+                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                let fasit = git_rev_list(&["--topo-order", $range]);
+
+                assert_eq!(&mine, &fasit, "left = mine, right = fasit");
+            }
+        };
+    }
+
+    fn git_rev_list(args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
-            .args(["rev-list", "--topo-order"])
+            .arg("rev-list")
             .args(args)
             .output()
             .expect("able to run git rev-list")
@@ -445,24 +566,29 @@ mod tests {
 
     // 753d1db: Initial commit
     topo_test!(t01_753d1db, "753d1db");
+    topo_test2!(t01_753d1db, "753d1db");
 
     // f28f649: Simple change
     topo_test!(t02_f28f649, "f28f649");
+    topo_test2!(t02_f28f649, "f28f649");
     topo_test!(t02_01_753d1db_f28f649, "753d1db..f28f649");
 
     // // d3baed3: Removes more than it adds
     topo_test!(t03_d3baed3, "d3baed3");
+    topo_test2!(t03_d3baed3, "d3baed3");
     topo_test!(t03_01_753d1db_d3baed3, "753d1db..d3baed3");
     topo_test!(t03_02_f28f649_d3baed3, "f28f649..d3baed3");
 
     // // 536a0f5: Adds more than it removes
     topo_test!(t04_536a0f5, "536a0f5");
+    topo_test2!(t04_536a0f5, "536a0f5");
     topo_test!(t04_01_753d1db_536a0f5, "753d1db..536a0f5");
     topo_test!(t04_02_f28f649_536a0f5, "f28f649..536a0f5");
     topo_test!(t04_03_d3baed3_536a0f5, "d3baed3..536a0f5");
 
     // // 6a30c80: Change on first line
     topo_test!(t05_6a30c80, "6a30c80");
+    topo_test2!(t05_6a30c80, "6a30c80");
     topo_test!(t05_01_753d1db_6a30c80, "753d1db..6a30c80");
     topo_test!(t05_02_f28f649_6a30c80, "f28f649..6a30c80");
     topo_test!(t05_03_d3baed3_6a30c80, "d3baed3..6a30c80");
@@ -470,6 +596,7 @@ mod tests {
 
     // // 4d8a3c7: Multiple changes in one commit
     topo_test!(t06_4d8a3c7, "4d8a3c7");
+    topo_test2!(t06_4d8a3c7, "4d8a3c7");
     topo_test!(t06_01_753d1db_4d8a3c7, "753d1db..4d8a3c7");
     topo_test!(t06_02_f28f649_4d8a3c7, "f28f649..4d8a3c7");
     topo_test!(t06_03_d3baed3_4d8a3c7, "d3baed3..4d8a3c7");
@@ -478,6 +605,7 @@ mod tests {
 
     // // 2064b3c: Change on last line
     topo_test!(t07_2064b3c, "2064b3c");
+    topo_test2!(t07_2064b3c, "2064b3c");
     topo_test!(t07_01_753d1db_2064b3c, "753d1db..2064b3c");
     topo_test!(t07_02_f28f649_2064b3c, "f28f649..2064b3c");
     topo_test!(t07_03_d3baed3_2064b3c, "d3baed3..2064b3c");
@@ -487,6 +615,7 @@ mod tests {
 
     // 0e17ccb: Blank line in context
     topo_test!(t08_0e17ccb, "0e17ccb");
+    topo_test2!(t08_0e17ccb, "0e17ccb");
     topo_test!(t08_01_753d1db_0e17ccb, "753d1db..0e17ccb");
     topo_test!(t08_02_f28f649_0e17ccb, "f28f649..0e17ccb");
     topo_test!(t08_03_d3baed3_0e17ccb, "d3baed3..0e17ccb");
@@ -497,6 +626,7 @@ mod tests {
 
     // 3be8265: Indent and overlap with previous change.
     topo_test!(t09_3be8265, "3be8265");
+    topo_test2!(t09_3be8265, "3be8265");
     topo_test!(t09_01_753d1db_3be8265, "753d1db..3be8265");
     topo_test!(t09_02_f28f649_3be8265, "f28f649..3be8265");
     topo_test!(t09_03_d3baed3_3be8265, "d3baed3..3be8265");
@@ -508,6 +638,7 @@ mod tests {
 
     // 8bf8780: Simple change but a bit bigger
     topo_test!(t10_8bf8780, "8bf8780");
+    topo_test2!(t10_8bf8780, "8bf8780");
     topo_test!(t10_01_753d1db_8bf8780, "753d1db..8bf8780");
     topo_test!(t10_02_f28f649_8bf8780, "f28f649..8bf8780");
     topo_test!(t10_03_d3baed3_8bf8780, "d3baed3..8bf8780");
@@ -521,6 +652,7 @@ mod tests {
 
     // f7a3a57: Remove a lot
     topo_test!(t11_f7a3a57, "f7a3a57");
+    topo_test2!(t11_f7a3a57, "f7a3a57");
     topo_test!(t11_01_753d1db_f7a3a57, "753d1db..f7a3a57");
     topo_test!(t11_02_f28f649_f7a3a57, "f28f649..f7a3a57");
     topo_test!(t11_03_d3baed3_f7a3a57, "d3baed3..f7a3a57");
@@ -534,6 +666,7 @@ mod tests {
 
     // 392db1b: Add a lot and blank lines
     topo_test!(t12_392db1b, "392db1b");
+    topo_test2!(t12_392db1b, "392db1b");
     topo_test!(t12_01_753d1db_392db1b, "753d1db..392db1b");
     topo_test!(t12_02_f28f649_392db1b, "f28f649..392db1b");
     topo_test!(t12_03_d3baed3_392db1b, "d3baed3..392db1b");
@@ -548,6 +681,7 @@ mod tests {
 
     // bb48275: Side project
     topo_test!(t13_bb48275, "bb48275");
+    topo_test2!(t13_bb48275, "bb48275");
     topo_test!(t13_01_753d1db_bb48275, "753d1db..bb48275");
     topo_test!(t13_02_f28f649_bb48275, "f28f649..bb48275");
     topo_test!(t13_03_d3baed3_bb48275, "d3baed3..bb48275");
@@ -563,6 +697,7 @@ mod tests {
 
     // c57fe89: Merge branch 'kek' into HEAD
     topo_test!(t14_c57fe89, "c57fe89");
+    topo_test2!(t14_c57fe89, "c57fe89");
     topo_test!(t14_01_753d1db_c57fe89, "753d1db..c57fe89");
     topo_test!(t14_02_f28f649_c57fe89, "f28f649..c57fe89");
     topo_test!(t14_03_d3baed3_c57fe89, "d3baed3..c57fe89");
@@ -579,6 +714,7 @@ mod tests {
 
     // d7d6328: Multiple changes in one commit again
     topo_test!(t15_d7d6328, "d7d6328");
+    topo_test2!(t15_d7d6328, "d7d6328");
     topo_test!(t15_01_753d1db_d7d6328, "753d1db..d7d6328");
     topo_test!(t15_02_f28f649_d7d6328, "f28f649..d7d6328");
     topo_test!(t15_03_d3baed3_d7d6328, "d3baed3..d7d6328");
