@@ -54,6 +54,36 @@ pub enum Error {
     Ancestor(#[from] gix_traverse::commit::ancestors::Error),
 }
 
+pub enum Sorting {
+    DateOrder,
+    TopoOrder,
+}
+
+static CELL: std::sync::OnceLock<Sorting> = std::sync::OnceLock::new();
+
+#[derive(Debug, Eq, PartialEq)]
+struct Key {
+    commit_time: i64,
+}
+
+impl Key {
+    fn new(commit_time: i64) -> Self {
+        Key { commit_time }
+    }
+}
+
+impl std::cmp::Ord for Key {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.commit_time.cmp(&other.commit_time)
+    }
+}
+
+impl std::cmp::PartialOrd for Key {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.commit_time.cmp(&other.commit_time))
+    }
+}
+
 // #[derive(Debug)]
 type WalkState = FlagSet<WalkFlags>;
 
@@ -156,7 +186,7 @@ where
             let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             // NOTE: in Git the ends are also added to the topo_queue, but then
-            // in simplify_commit() Git is told to ignore it. For now my tests pass.
+            // in simplify_commit() Git is told to ignore it. For now the tests pass.
             if i == 1 {
                 s.topo_queue.push(*id);
             }
@@ -366,10 +396,10 @@ impl Walk2 {
             }
         }
 
-        let mut queue = PriorityQueue::<_, ObjectId>::new();
+        let mut queue = PriorityQueue::<Key, ObjectId>::new();
 
         for info in all.iter().filter(|info| indegrees[&info.id] == 1) {
-            queue.insert(info.commit_time.expect("commit_time"), info.id);
+            queue.insert(Key::new(info.commit_time.expect("commit_time")), info.id);
         }
 
         let sort_by_time = true;
@@ -391,7 +421,7 @@ impl Walk2 {
                 *i -= 1;
 
                 if *i == 1 {
-                    queue.insert(info.commit_time.expect("commit_time 2"), *parent);
+                    queue.insert(Key::new(info.commit_time.expect("commit_time 2")), *parent);
                 }
             }
 
