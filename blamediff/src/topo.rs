@@ -596,50 +596,41 @@ mod tests {
             .map(gix::ObjectId::from_str)
             .collect::<Result<Vec<_>, _>>()
             .expect("rev-list returns valid object ids")
-    }
-
-    // 753d1db: Initial commit
+    } // 753d1db: Initial commit
     topo_test!(t01_753d1db, "753d1db");
-    topo_test2!(t01_753d1db, "753d1db");
 
     // f28f649: Simple change
     topo_test!(t02_f28f649, "f28f649");
-    topo_test2!(t02_f28f649, "f28f649");
     topo_test!(t02_01_753d1db_f28f649, "753d1db..f28f649");
 
-    // // d3baed3: Removes more than it adds
+    // d3baed3: Removes more than it adds
     topo_test!(t03_d3baed3, "d3baed3");
-    topo_test2!(t03_d3baed3, "d3baed3");
     topo_test!(t03_01_753d1db_d3baed3, "753d1db..d3baed3");
     topo_test!(t03_02_f28f649_d3baed3, "f28f649..d3baed3");
 
-    // // 536a0f5: Adds more than it removes
+    // 536a0f5: Adds more than it removes
     topo_test!(t04_536a0f5, "536a0f5");
-    topo_test2!(t04_536a0f5, "536a0f5");
     topo_test!(t04_01_753d1db_536a0f5, "753d1db..536a0f5");
     topo_test!(t04_02_f28f649_536a0f5, "f28f649..536a0f5");
     topo_test!(t04_03_d3baed3_536a0f5, "d3baed3..536a0f5");
 
-    // // 6a30c80: Change on first line
+    // 6a30c80: Change on first line
     topo_test!(t05_6a30c80, "6a30c80");
-    topo_test2!(t05_6a30c80, "6a30c80");
     topo_test!(t05_01_753d1db_6a30c80, "753d1db..6a30c80");
     topo_test!(t05_02_f28f649_6a30c80, "f28f649..6a30c80");
     topo_test!(t05_03_d3baed3_6a30c80, "d3baed3..6a30c80");
     topo_test!(t05_04_536a0f5_6a30c80, "536a0f5..6a30c80");
 
-    // // 4d8a3c7: Multiple changes in one commit
+    // 4d8a3c7: Multiple changes in one commit
     topo_test!(t06_4d8a3c7, "4d8a3c7");
-    topo_test2!(t06_4d8a3c7, "4d8a3c7");
     topo_test!(t06_01_753d1db_4d8a3c7, "753d1db..4d8a3c7");
     topo_test!(t06_02_f28f649_4d8a3c7, "f28f649..4d8a3c7");
     topo_test!(t06_03_d3baed3_4d8a3c7, "d3baed3..4d8a3c7");
     topo_test!(t06_04_536a0f5_4d8a3c7, "536a0f5..4d8a3c7");
     topo_test!(t06_05_6a30c80_4d8a3c7, "6a30c80..4d8a3c7");
 
-    // // 2064b3c: Change on last line
+    // 2064b3c: Change on last line
     topo_test!(t07_2064b3c, "2064b3c");
-    topo_test2!(t07_2064b3c, "2064b3c");
     topo_test!(t07_01_753d1db_2064b3c, "753d1db..2064b3c");
     topo_test!(t07_02_f28f649_2064b3c, "f28f649..2064b3c");
     topo_test!(t07_03_d3baed3_2064b3c, "d3baed3..2064b3c");
@@ -649,7 +640,6 @@ mod tests {
 
     // 0e17ccb: Blank line in context
     topo_test!(t08_0e17ccb, "0e17ccb");
-    topo_test2!(t08_0e17ccb, "0e17ccb");
     topo_test!(t08_01_753d1db_0e17ccb, "753d1db..0e17ccb");
     topo_test!(t08_02_f28f649_0e17ccb, "f28f649..0e17ccb");
     topo_test!(t08_03_d3baed3_0e17ccb, "d3baed3..0e17ccb");
@@ -660,7 +650,6 @@ mod tests {
 
     // 3be8265: Indent and overlap with previous change.
     topo_test!(t09_3be8265, "3be8265");
-    topo_test2!(t09_3be8265, "3be8265");
     topo_test!(t09_01_753d1db_3be8265, "753d1db..3be8265");
     topo_test!(t09_02_f28f649_3be8265, "f28f649..3be8265");
     topo_test!(t09_03_d3baed3_3be8265, "d3baed3..3be8265");
@@ -672,7 +661,6 @@ mod tests {
 
     // 8bf8780: Simple change but a bit bigger
     topo_test!(t10_8bf8780, "8bf8780");
-    topo_test2!(t10_8bf8780, "8bf8780");
     topo_test!(t10_01_753d1db_8bf8780, "753d1db..8bf8780");
     topo_test!(t10_02_f28f649_8bf8780, "f28f649..8bf8780");
     topo_test!(t10_03_d3baed3_8bf8780, "d3baed3..8bf8780");
@@ -682,11 +670,9 @@ mod tests {
     topo_test!(t10_07_2064b3c_8bf8780, "2064b3c..8bf8780");
     topo_test!(t10_08_0e17ccb_8bf8780, "0e17ccb..8bf8780");
     topo_test!(t10_09_3be8265_8bf8780, "3be8265..8bf8780");
-    topo_test!(t10_10_bb48275_8bf8780, "3be8265..8bf8780");
 
     // f7a3a57: Remove a lot
     topo_test!(t11_f7a3a57, "f7a3a57");
-    topo_test2!(t11_f7a3a57, "f7a3a57");
     topo_test!(t11_01_753d1db_f7a3a57, "753d1db..f7a3a57");
     topo_test!(t11_02_f28f649_f7a3a57, "f28f649..f7a3a57");
     topo_test!(t11_03_d3baed3_f7a3a57, "d3baed3..f7a3a57");
@@ -700,7 +686,6 @@ mod tests {
 
     // 392db1b: Add a lot and blank lines
     topo_test!(t12_392db1b, "392db1b");
-    topo_test2!(t12_392db1b, "392db1b");
     topo_test!(t12_01_753d1db_392db1b, "753d1db..392db1b");
     topo_test!(t12_02_f28f649_392db1b, "f28f649..392db1b");
     topo_test!(t12_03_d3baed3_392db1b, "d3baed3..392db1b");
@@ -713,54 +698,69 @@ mod tests {
     topo_test!(t12_10_8bf8780_392db1b, "8bf8780..392db1b");
     topo_test!(t12_11_f7a3a57_392db1b, "f7a3a57..392db1b");
 
+    // 616867d: October
+    topo_test!(t13_616867d, "616867d");
+    topo_test!(t13_01_753d1db_616867d, "753d1db..616867d");
+    topo_test!(t13_02_f28f649_616867d, "f28f649..616867d");
+    topo_test!(t13_03_d3baed3_616867d, "d3baed3..616867d");
+    topo_test!(t13_04_536a0f5_616867d, "536a0f5..616867d");
+    topo_test!(t13_05_6a30c80_616867d, "6a30c80..616867d");
+    topo_test!(t13_06_4d8a3c7_616867d, "4d8a3c7..616867d");
+    topo_test!(t13_07_2064b3c_616867d, "2064b3c..616867d");
+    topo_test!(t13_08_0e17ccb_616867d, "0e17ccb..616867d");
+    topo_test!(t13_09_3be8265_616867d, "3be8265..616867d");
+    topo_test!(t13_10_8bf8780_616867d, "8bf8780..616867d");
+    topo_test!(t13_11_f7a3a57_616867d, "f7a3a57..616867d");
+    topo_test!(t13_12_392db1b_616867d, "392db1b..616867d");
+
     // bb48275: Side project
-    topo_test!(t13_bb48275, "bb48275");
-    topo_test2!(t13_bb48275, "bb48275");
-    topo_test!(t13_01_753d1db_bb48275, "753d1db..bb48275");
-    topo_test!(t13_02_f28f649_bb48275, "f28f649..bb48275");
-    topo_test!(t13_03_d3baed3_bb48275, "d3baed3..bb48275");
-    topo_test!(t13_04_536a0f5_bb48275, "536a0f5..bb48275");
-    topo_test!(t13_05_6a30c80_bb48275, "6a30c80..bb48275");
-    topo_test!(t13_06_4d8a3c7_bb48275, "4d8a3c7..bb48275");
-    topo_test!(t13_07_2064b3c_bb48275, "2064b3c..bb48275");
-    topo_test!(t13_08_0e17ccb_bb48275, "0e17ccb..bb48275");
-    topo_test!(t13_09_3be8265_bb48275, "3be8265..bb48275");
-    topo_test!(t13_10_8bf8780_bb48275, "8bf8780..bb48275");
-    topo_test!(t13_11_f7a3a57_bb48275, "f7a3a57..bb48275");
-    topo_test!(t13_12_392db1b_bb48275, "392db1b..bb48275");
+    topo_test!(t14_bb48275, "bb48275");
+    topo_test!(t14_01_753d1db_bb48275, "753d1db..bb48275");
+    topo_test!(t14_02_f28f649_bb48275, "f28f649..bb48275");
+    topo_test!(t14_03_d3baed3_bb48275, "d3baed3..bb48275");
+    topo_test!(t14_04_536a0f5_bb48275, "536a0f5..bb48275");
+    topo_test!(t14_05_6a30c80_bb48275, "6a30c80..bb48275");
+    topo_test!(t14_06_4d8a3c7_bb48275, "4d8a3c7..bb48275");
+    topo_test!(t14_07_2064b3c_bb48275, "2064b3c..bb48275");
+    topo_test!(t14_08_0e17ccb_bb48275, "0e17ccb..bb48275");
+    topo_test!(t14_09_3be8265_bb48275, "3be8265..bb48275");
+    topo_test!(t14_10_8bf8780_bb48275, "8bf8780..bb48275");
+    topo_test!(t14_11_f7a3a57_bb48275, "f7a3a57..bb48275");
+    topo_test!(t14_12_392db1b_bb48275, "392db1b..bb48275");
+    topo_test!(t14_13_616867d_bb48275, "616867d..bb48275");
 
-    // c57fe89: Merge branch 'kek' into HEAD
-    topo_test!(t14_c57fe89, "c57fe89");
-    topo_test2!(t14_c57fe89, "c57fe89");
-    topo_test!(t14_01_753d1db_c57fe89, "753d1db..c57fe89");
-    topo_test!(t14_02_f28f649_c57fe89, "f28f649..c57fe89");
-    topo_test!(t14_03_d3baed3_c57fe89, "d3baed3..c57fe89");
-    topo_test!(t14_04_536a0f5_c57fe89, "536a0f5..c57fe89");
-    topo_test!(t14_05_6a30c80_c57fe89, "6a30c80..c57fe89");
-    topo_test!(t14_06_4d8a3c7_c57fe89, "4d8a3c7..c57fe89");
-    topo_test!(t14_07_2064b3c_c57fe89, "2064b3c..c57fe89");
-    topo_test!(t14_08_0e17ccb_c57fe89, "0e17ccb..c57fe89");
-    topo_test!(t14_09_3be8265_c57fe89, "3be8265..c57fe89");
-    topo_test!(t14_10_8bf8780_c57fe89, "8bf8780..c57fe89");
-    topo_test!(t14_11_f7a3a57_c57fe89, "f7a3a57..c57fe89");
-    topo_test!(t14_12_392db1b_c57fe89, "392db1b..c57fe89");
-    topo_test!(t14_13_bb48275_c57fe89, "bb48275..c57fe89");
+    // bb8601c: Merge branch 'kek2' into HEAD
+    topo_test!(t15_bb8601c, "bb8601c");
+    topo_test!(t15_01_753d1db_bb8601c, "753d1db..bb8601c");
+    topo_test!(t15_02_f28f649_bb8601c, "f28f649..bb8601c");
+    topo_test!(t15_03_d3baed3_bb8601c, "d3baed3..bb8601c");
+    topo_test!(t15_04_536a0f5_bb8601c, "536a0f5..bb8601c");
+    topo_test!(t15_05_6a30c80_bb8601c, "6a30c80..bb8601c");
+    topo_test!(t15_06_4d8a3c7_bb8601c, "4d8a3c7..bb8601c");
+    topo_test!(t15_07_2064b3c_bb8601c, "2064b3c..bb8601c");
+    topo_test!(t15_08_0e17ccb_bb8601c, "0e17ccb..bb8601c");
+    topo_test!(t15_09_3be8265_bb8601c, "3be8265..bb8601c");
+    topo_test!(t15_10_8bf8780_bb8601c, "8bf8780..bb8601c");
+    topo_test!(t15_11_f7a3a57_bb8601c, "f7a3a57..bb8601c");
+    topo_test!(t15_12_392db1b_bb8601c, "392db1b..bb8601c");
+    topo_test!(t15_13_616867d_bb8601c, "616867d..bb8601c");
+    topo_test!(t15_14_bb48275_bb8601c, "bb48275..bb8601c");
 
-    // d7d6328: Multiple changes in one commit again
-    topo_test!(t15_d7d6328, "d7d6328");
-    topo_test2!(t15_d7d6328, "d7d6328");
-    topo_test!(t15_01_753d1db_d7d6328, "753d1db..d7d6328");
-    topo_test!(t15_02_f28f649_d7d6328, "f28f649..d7d6328");
-    topo_test!(t15_03_d3baed3_d7d6328, "d3baed3..d7d6328");
-    topo_test!(t15_04_536a0f5_d7d6328, "536a0f5..d7d6328");
-    topo_test!(t15_05_6a30c80_d7d6328, "6a30c80..d7d6328");
-    topo_test!(t15_06_4d8a3c7_d7d6328, "4d8a3c7..d7d6328");
-    topo_test!(t15_07_2064b3c_d7d6328, "2064b3c..d7d6328");
-    topo_test!(t15_08_0e17ccb_d7d6328, "0e17ccb..d7d6328");
-    topo_test!(t15_09_3be8265_d7d6328, "3be8265..d7d6328");
-    topo_test!(t15_10_8bf8780_d7d6328, "8bf8780..d7d6328");
-    topo_test!(t15_11_f7a3a57_d7d6328, "f7a3a57..d7d6328");
-    topo_test!(t15_12_392db1b_d7d6328, "392db1b..d7d6328");
-    topo_test!(t15_13_bb48275_d7d6328, "bb48275..d7d6328");
-    topo_test!(t15_14_c57fe89_d7d6328, "c57fe89..d7d6328");
+    // 00491e2: Multiple changes in one commit again
+    topo_test!(t16_00491e2, "00491e2");
+    topo_test!(t16_01_753d1db_00491e2, "753d1db..00491e2");
+    topo_test!(t16_02_f28f649_00491e2, "f28f649..00491e2");
+    topo_test!(t16_03_d3baed3_00491e2, "d3baed3..00491e2");
+    topo_test!(t16_04_536a0f5_00491e2, "536a0f5..00491e2");
+    topo_test!(t16_05_6a30c80_00491e2, "6a30c80..00491e2");
+    topo_test!(t16_06_4d8a3c7_00491e2, "4d8a3c7..00491e2");
+    topo_test!(t16_07_2064b3c_00491e2, "2064b3c..00491e2");
+    topo_test!(t16_08_0e17ccb_00491e2, "0e17ccb..00491e2");
+    topo_test!(t16_09_3be8265_00491e2, "3be8265..00491e2");
+    topo_test!(t16_10_8bf8780_00491e2, "8bf8780..00491e2");
+    topo_test!(t16_11_f7a3a57_00491e2, "f7a3a57..00491e2");
+    topo_test!(t16_12_392db1b_00491e2, "392db1b..00491e2");
+    topo_test!(t16_13_616867d_00491e2, "616867d..00491e2");
+    topo_test!(t16_14_bb48275_00491e2, "bb48275..00491e2");
+    topo_test!(t16_15_bb8601c_00491e2, "bb8601c..00491e2");
 }
