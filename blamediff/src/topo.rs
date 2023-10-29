@@ -488,20 +488,36 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn resolve(repo: &gix::Repository, range: &str) -> (ObjectId, Option<ObjectId>) {
+        let range = repo.rev_parse(range).expect("valid range").detach();
+
+        use gix_revision::Spec;
+
+        match range {
+            Spec::Include(oid) => (oid, None),
+            Spec::Range { from, to } => (to, Some(from)),
+            _ => panic!("lol"),
+        }
+    }
+
+    fn compare<I, E>(iter: I, range: &str)
+    where
+        I: Iterator<Item = Result<gix::ObjectId, E>>,
+        E: std::error::Error,
+    {
+        let mine = iter.collect::<Result<Vec<_>, _>>().unwrap();
+        let fasit = git_rev_list(&["--topo-order", range]);
+
+        assert_eq!(&mine, &fasit, "left = mine, right = fasit");
+    }
+
     macro_rules! topo_test {
-        ($test_name:ident, $range:literal) => {};
+        // ($test_name:ident, $range:literal) => {};
         ($test_name:ident, $range:literal) => {
             #[test]
             fn $test_name() {
                 let repo = gix::discover(".").unwrap();
-                let range = repo.rev_parse($range).expect("valid range").detach();
-
-                use gix_revision::Spec;
-                let (start, end) = match range {
-                    Spec::Include(oid) => (oid, None),
-                    Spec::Range { from, to } => (to, Some(from)),
-                    _ => panic!("lol"),
-                };
+                let (start, end) = resolve(&repo, $range);
 
                 let walk = Walk::new(
                     repo.commit_graph().unwrap(),
@@ -511,27 +527,18 @@ mod tests {
                 )
                 .unwrap();
 
-                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let fasit = run_git_rev(&["--topo-order", $range]);
-
-                assert_eq!(&mine, &fasit, "left = mine, right = fasit");
+                compare(walk, $range);
             }
         };
     }
 
     macro_rules! topo_test2 {
+        ($test_name:ident, $range:literal) => {};
         ($test_name:ident, $range:literal) => {
             #[test]
             fn $test_name() {
                 let repo = gix::discover(".").unwrap();
-                let range = repo.rev_parse($range).expect("valid range").detach();
-
-                use gix_revision::Spec;
-                let (start, end) = match range {
-                    Spec::Include(oid) => (oid, None),
-                    Spec::Range { from, to } => (to, Some(from)),
-                    _ => panic!("lol"),
-                };
+                let (start, end) = resolve(&repo, $range);
 
                 let walk = Walk2::new(
                     |id, buf| repo.objects.find_commit_iter(id, buf),
@@ -540,10 +547,7 @@ mod tests {
                 )
                 .unwrap();
 
-                let mine = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let fasit = git_rev_list(&["--topo-order", $range]);
-
-                assert_eq!(&mine, &fasit, "left = mine, right = fasit");
+                compare(walk, $range);
             }
         };
     }
