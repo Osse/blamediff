@@ -138,8 +138,8 @@ where
         commit_graph: gix_commitgraph::Graph,
         f: Find,
         sorting: Sorting,
-        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
-        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
+        tips: &[gix::ObjectId],
+        ends: &[gix::ObjectId],
     ) -> Result<Self, Error> {
         let mut s = Self {
             commit_graph,
@@ -153,69 +153,118 @@ where
             buf: vec![],
         };
 
-        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
-        let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
+        s.init(tips, ends);
 
-        let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
+        Ok(s)
+    }
+
+    /// Create a new Walk that walks the given repository, starting at the
+    /// tips and ending at the ends. Like `git rev-list --topo-order
+    /// ^ends... tips...`
+    pub fn from_iters(
+        commit_graph: gix_commitgraph::Graph,
+        f: Find,
+        sorting: Sorting,
+        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
+        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
+    ) -> Result<Self, Error> {
+        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
         let ends = ends
             .map(|e| e.into_iter().map(Into::into).collect::<Vec<_>>())
             .unwrap_or_default();
+
+        Self::new(commit_graph, f, sorting, &tips, &ends)
+    }
+
+    /// Create a new Walk that walks the given repository, starting at the
+    /// tips and ending at the ends, given by the `[gix_revision::Spec]Specs`
+    /// ^ends... tips...`
+    pub fn from_specs(
+        commit_graph: gix_commitgraph::Graph,
+        f: Find,
+        sorting: Sorting,
+        specs: impl IntoIterator<Item = gix_revision::Spec>,
+    ) -> Result<Self, Error> {
+        let mut tips = vec![];
+        let mut ends = vec![];
+
+        for spec in specs {
+            use gix_revision::Spec as S;
+            match spec {
+                S::Include(i) => tips.push(i),
+                S::Exclude(e) => ends.push(e),
+                S::Range { from, to } => {
+                    tips.push(to);
+                    ends.push(from)
+                }
+                S::Merge { theirs, ours } => todo!(),
+                S::IncludeOnlyParents(_) => todo!(),
+                S::ExcludeParents(_) => todo!(),
+            }
+        }
+
+        Self::new(commit_graph, f, sorting, &tips, &ends)
+    }
+
+    fn init(&mut self, tips: &[gix::ObjectId], ends: &[gix::ObjectId]) -> Result<(), Error> {
+        let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
+        let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
 
         for (id, flags) in tips
             .iter()
             .map(|id| (id, tip_flags))
             .chain(ends.iter().map(|id| (id, end_flags)))
         {
-            *s.indegrees.entry(*id).or_default() = 1;
+            *self.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
+            let commit = find(Some(&self.commit_graph), &self.find, id, &mut self.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
             let (gen, time) = get_gen_and_commit_time(commit)?;
 
-            if gen < s.min_gen {
-                s.min_gen = gen;
+            if gen < self.min_gen {
+                self.min_gen = gen;
             }
 
             let state = flags | WalkFlags::Explored | WalkFlags::InDegree;
 
-            s.states.insert(*id, state);
-            s.explore_queue.insert((gen, time), *id);
-            s.indegree_queue.insert((gen, time), *id);
+            self.states.insert(*id, state);
+            self.explore_queue.insert((gen, time), *id);
+            self.indegree_queue.insert((gen, time), *id);
         }
 
         // NOTE: Parents of ends must also be marked uninteresting for some
         // reason. See handle_commit()
-        for id in &ends {
-            let parents = s.collect_parents(id)?;
+        for id in ends {
+            let parents = self.collect_parents(id)?;
             for (id, _) in parents {
-                s.states
+                self.states
                     .entry(id)
                     .and_modify(|s| *s |= WalkFlags::Uninteresting)
                     .or_insert(WalkFlags::Uninteresting | WalkFlags::Seen);
             }
         }
 
-        s.compute_indegrees_to_depth(s.min_gen)?;
+        self.compute_indegrees_to_depth(self.min_gen)?;
 
         for id in tips.iter() {
-            let i = *s.indegrees.get(id).ok_or(Error::MissingIndegree)?;
+            let i = *self.indegrees.get(id).ok_or(Error::MissingIndegree)?;
 
             // NOTE: in Git the ends are also added to the topo_queue, but then
             // in simplify_commit() Git is told to ignore it. For now the tests pass.
             if i == 1 {
-                let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
+                let commit = find(Some(&self.commit_graph), &self.find, id, &mut self.buf)
                     .map_err(|_err| Error::CommitNotFound)?;
 
                 let (gen, time) = get_gen_and_commit_time(commit)?;
 
-                s.topo_queue.push(time, *id);
+                self.topo_queue.push(time, *id);
             }
         }
 
-        s.topo_queue.reverse();
+        self.topo_queue.reverse();
 
-        Ok(s)
+        Ok(())
     }
 
     fn compute_indegrees_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
@@ -490,61 +539,10 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn resolve(repo: &gix::Repository, range: &str) -> (ObjectId, Option<ObjectId>) {
-        let range = repo.rev_parse(range).expect("valid range").detach();
-
-        use gix_revision::Spec;
-
-        match range {
-            Spec::Include(oid) => (oid, None),
-            Spec::Range { from, to } => (to, Some(from)),
-            _ => panic!("lol"),
-        }
-    }
-
-    fn compare<I, E>(iter: I, order_flag: &str, range: &str)
-    where
-        I: Iterator<Item = Result<gix::ObjectId, E>>,
-        E: std::error::Error,
-    {
-        let mine = iter.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = git_rev_list(&[order_flag, range]);
-
-        assert_eq!(
-            &mine, &fasit,
-            "left = mine, right = fasit, flag = {order_flag}",
-        );
-    }
-
-    macro_rules! topo_test {
-        ($test_name:ident, $range:literal) => {
-            #[test]
-            fn $test_name() {
-                let repo = gix::discover(".").unwrap();
-                let (start, end) = resolve(&repo, $range);
-
-                for (flag, sorting) in [
-                    ("--date-order", Sorting::DateOrder),
-                    ("--topo-order", Sorting::TopoOrder),
-                ] {
-                    let walk = Walk::new(
-                        repo.commit_graph().unwrap(),
-                        |id, buf| repo.objects.find_commit_iter(id, buf),
-                        sorting,
-                        std::iter::once(start),
-                        end.map(|e| std::iter::once(e)),
-                    )
-                    .unwrap();
-
-                    compare(walk, flag, $range);
-                }
-            }
-        };
-    }
-
-    fn git_rev_list(args: &[&str]) -> Vec<gix::ObjectId> {
+    fn git_rev_list(flag: &str, args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
             .arg("rev-list")
+            .arg(flag)
             .args(args)
             .output()
             .expect("able to run git rev-list")
@@ -556,6 +554,42 @@ mod tests {
             .map(gix::ObjectId::from_str)
             .collect::<Result<Vec<_>, _>>()
             .expect("rev-list returns valid object ids")
+    }
+
+    fn compare<I, E>(iter: I, flag: &str, args: &[&str])
+    where
+        I: Iterator<Item = Result<gix::ObjectId, E>>,
+        E: std::error::Error,
+    {
+        let mine = iter.collect::<Result<Vec<_>, _>>().unwrap();
+        let fasit = git_rev_list(flag, args);
+
+        assert_eq!(&mine, &fasit, "left = mine, right = fasit, flag = {flag}");
+    }
+
+    macro_rules! topo_test {
+        ($test_name:ident, $($spec:literal),+) => {
+            #[test]
+            fn $test_name() {
+                let repo = gix::discover(".").unwrap();
+                let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
+
+                for (flag, sorting) in [
+                    ("--date-order", Sorting::DateOrder),
+                    ("--topo-order", Sorting::TopoOrder),
+                ] {
+                    let walk = Walk::from_specs(
+                        repo.commit_graph().unwrap(),
+                        |id, buf| repo.objects.find_commit_iter(id, buf),
+                        sorting,
+                        specs.into_iter()
+                    )
+                    .unwrap();
+
+                    compare(walk, flag, &[$($spec),+]);
+                }
+            }
+        };
     }
 
     // 753d1db: Initial commit
@@ -575,6 +609,7 @@ mod tests {
     topo_test!(t04_01_753d1db_536a0f5, "753d1db..536a0f5");
     topo_test!(t04_02_f28f649_536a0f5, "f28f649..536a0f5");
     topo_test!(t04_03_d3baed3_536a0f5, "d3baed3..536a0f5");
+    topo_test!(ends_t04_03_d3baed3_536a0f5, "^d3baed3", "536a0f5");
 
     // 6a30c80: Change on first line
     topo_test!(t05_6a30c80, "6a30c80");
