@@ -609,7 +609,6 @@ mod tests {
     topo_test!(t04_01_753d1db_536a0f5, "753d1db..536a0f5");
     topo_test!(t04_02_f28f649_536a0f5, "f28f649..536a0f5");
     topo_test!(t04_03_d3baed3_536a0f5, "d3baed3..536a0f5");
-    topo_test!(ends_t04_03_d3baed3_536a0f5, "^d3baed3", "536a0f5");
 
     // 6a30c80: Change on first line
     topo_test!(t05_6a30c80, "6a30c80");
@@ -820,4 +819,6 @@ mod tests {
     topo_test!(t19_16_00491e2_b282e76, "00491e2..b282e76");
     topo_test!(t19_17_d87231e_b282e76, "d87231e..b282e76");
     topo_test!(t19_18_51c8d7c_b282e76, "51c8d7c..b282e76");
+
+    topo_test!(t20, "b282e76", "^616867d", "^bb48275");
 }
