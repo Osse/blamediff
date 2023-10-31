@@ -65,31 +65,6 @@ pub enum Sorting {
     TopoOrder,
 }
 
-static CELL: std::sync::OnceLock<Sorting> = std::sync::OnceLock::new();
-
-#[derive(Debug, Eq, PartialEq)]
-struct Key {
-    commit_time: i64,
-}
-
-impl Key {
-    fn new(commit_time: i64) -> Self {
-        Key { commit_time }
-    }
-}
-
-impl std::cmp::Ord for Key {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.commit_time.cmp(&other.commit_time)
-    }
-}
-
-impl std::cmp::PartialOrd for Key {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.commit_time.cmp(&other.commit_time))
-    }
-}
-
 // Git's priority queue works as a LIFO stack if no compare function is set,
 // which is the case for --topo-order
 enum Queue {
@@ -126,6 +101,8 @@ impl Queue {
     }
 }
 
+type GenAndCommitTime = (u32, i64);
+
 // #[derive(Debug)]
 type WalkState = FlagSet<WalkFlags>;
 
@@ -141,8 +118,8 @@ where
     find: Find,
     indegrees: IdMap<i32>,
     states: IdMap<WalkState>,
-    explore_queue: PriorityQueue<u32, ObjectId>,
-    indegree_queue: PriorityQueue<u32, ObjectId>,
+    explore_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
+    indegree_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
     topo_queue: Queue,
     min_gen: u32,
     buf: Vec<u8>,
@@ -194,10 +171,7 @@ where
             let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
-            let gen = match commit {
-                Either::CommitRefIter(c) => gix_commitgraph::GENERATION_NUMBER_INFINITY,
-                Either::CachedCommit(c) => c.generation(),
-            };
+            let (gen, time) = get_gen_and_commit_time(commit)?;
 
             if gen < s.min_gen {
                 s.min_gen = gen;
@@ -206,15 +180,15 @@ where
             let state = flags | WalkFlags::Explored | WalkFlags::InDegree;
 
             s.states.insert(*id, state);
-            s.explore_queue.insert(gen, *id);
-            s.indegree_queue.insert(gen, *id);
+            s.explore_queue.insert((gen, time), *id);
+            s.indegree_queue.insert((gen, time), *id);
         }
 
         // NOTE: Parents of ends must also be marked uninteresting for some
         // reason. See handle_commit()
         for id in &ends {
             let parents = s.collect_parents(id)?;
-            for (id, _, _) in parents {
+            for (id, _) in parents {
                 s.states
                     .entry(id)
                     .and_modify(|s| *s |= WalkFlags::Uninteresting)
@@ -233,27 +207,7 @@ where
                 let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
                     .map_err(|_err| Error::CommitNotFound)?;
 
-                let (gen, time) = match commit {
-                    Either::CommitRefIter(c) => {
-                        let mut commit_time = 0;
-                        for token in c {
-                            match token {
-                                Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
-                                Ok(gix_object::commit::ref_iter::Token::Parent { .. }) => continue,
-                                Ok(gix_object::commit::ref_iter::Token::Committer {
-                                    signature,
-                                }) => {
-                                    commit_time = signature.time.seconds;
-                                    break;
-                                }
-                                Ok(_unused_token) => break,
-                                Err(err) => return Err(err.into()),
-                            }
-                        }
-                        (gix_commitgraph::GENERATION_NUMBER_INFINITY, commit_time)
-                    }
-                    Either::CachedCommit(c) => (c.generation(), c.committer_timestamp() as i64),
-                };
+                let (gen, time) = get_gen_and_commit_time(commit)?;
 
                 s.topo_queue.push(time, *id);
             }
@@ -265,7 +219,7 @@ where
     }
 
     fn compute_indegrees_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        while let Some((gen, _)) = self.indegree_queue.peek() {
+        while let Some(((gen, _), _)) = self.indegree_queue.peek() {
             if *gen >= gen_cutoff {
                 self.indegree_walk_step()?;
             } else {
@@ -277,12 +231,12 @@ where
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
-        if let Some((gen, id)) = self.indegree_queue.pop() {
+        if let Some(((gen, time), id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
             let parents = self.collect_parents(&id)?;
 
-            for (id, gen, _) in parents {
+            for (id, gen_time) in parents {
                 self.indegrees
                     .entry(id)
                     .and_modify(|e| *e += 1)
@@ -292,7 +246,7 @@ where
 
                 if !state.contains(WalkFlags::InDegree) {
                     *state |= WalkFlags::InDegree;
-                    self.indegree_queue.insert(gen, id);
+                    self.indegree_queue.insert(gen_time, id);
                 }
             }
         }
@@ -301,7 +255,7 @@ where
     }
 
     fn explore_to_depth(&mut self, gen_cutoff: u32) -> Result<(), Error> {
-        while let Some((gen, _)) = self.explore_queue.peek() {
+        while let Some(((gen, _), _)) = self.explore_queue.peek() {
             if *gen >= gen_cutoff {
                 self.explore_walk_step()?;
             } else {
@@ -318,12 +272,12 @@ where
 
             self.process_parents(&id, &parents)?;
 
-            for (id, gen, _) in parents {
+            for (id, gen_time) in parents {
                 let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
                 if !state.contains(WalkFlags::Explored) {
                     *state |= WalkFlags::Explored;
-                    self.explore_queue.insert(gen, id);
+                    self.explore_queue.insert(gen_time, id);
                 }
             }
         }
@@ -336,7 +290,7 @@ where
 
         self.process_parents(id, &parents)?;
 
-        for (pid, parent_gen, parent_commit_time) in parents {
+        for (pid, (parent_gen, parent_commit_time)) in parents {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
 
             if parent_state.contains(WalkFlags::Uninteresting) {
@@ -360,7 +314,11 @@ where
         Ok(())
     }
 
-    fn process_parents(&mut self, id: &oid, parents: &[(ObjectId, u32, i64)]) -> Result<(), Error> {
+    fn process_parents(
+        &mut self,
+        id: &oid,
+        parents: &[(ObjectId, GenAndCommitTime)],
+    ) -> Result<(), Error> {
         let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
         if state.contains(WalkFlags::Added) {
@@ -379,7 +337,7 @@ where
             (flags, flags | WalkFlags::Seen)
         };
 
-        for (id, _, _) in parents {
+        for (id, _) in parents {
             self.states
                 .entry(*id)
                 .and_modify(|s| *s |= pass)
@@ -389,7 +347,10 @@ where
         Ok(())
     }
 
-    fn collect_parents(&mut self, id: &oid) -> Result<SmallVec<[(ObjectId, u32, i64); 1]>, Error> {
+    fn collect_parents(
+        &mut self,
+        id: &oid,
+    ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error> {
         collect_parents(Some(&self.commit_graph), &self.find, id, &mut self.buf)
     }
 }
@@ -425,92 +386,6 @@ where
     }
 }
 
-pub struct Walk2 {
-    list: Vec<ObjectId>,
-}
-
-// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
-impl Walk2 {
-    /// Create a new Walk that walks the given repository, starting at the
-    /// tips and ending at the bottoms. Like `git rev-list --topo-order
-    /// ^bottom... tips...`
-    pub fn new<Find, E>(
-        f: Find,
-        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
-        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
-    ) -> Result<Self, Error>
-    where
-        Find:
-            for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        let a = gix_traverse::commit::Ancestors::new(
-            tips,
-            gix_traverse::commit::ancestors::State::default(),
-            f,
-        )
-        .sorting(gix_traverse::commit::Sorting::ByCommitTimeNewestFirst)
-        .expect("new sorting");
-
-        let all = a.collect::<Result<Vec<_>, _>>()?;
-
-        let mut indegrees = IdMap::from_iter(all.iter().map(|info| (info.id, 1)));
-        let infos = IdMap::from_iter(all.iter().map(|info| (info.id, info.clone())));
-
-        for info in &all {
-            for parent in &info.parent_ids {
-                indegrees.entry(*parent).and_modify(|i| *i += 1);
-            }
-        }
-
-        let mut queue = PriorityQueue::<Key, ObjectId>::new();
-
-        for info in all.iter().filter(|info| indegrees[&info.id] == 1) {
-            queue.insert(Key::new(info.commit_time.expect("commit_time")), info.id);
-        }
-
-        let sort_by_time = true;
-        if !sort_by_time {
-            // Reverse queue
-        }
-
-        let mut final_list = vec![];
-
-        while let Some((_, id)) = queue.pop() {
-            let info = &infos[&id];
-            for parent in &info.parent_ids {
-                let i = indegrees.get_mut(parent).expect("indegrees.get_mut");
-
-                if *i == 0 {
-                    continue;
-                }
-
-                *i -= 1;
-
-                if *i == 1 {
-                    queue.insert(Key::new(info.commit_time.expect("commit_time 2")), *parent);
-                }
-            }
-
-            *indegrees.get_mut(&id).expect("indegrees.get_mut 2") = 0;
-
-            final_list.push(id);
-        }
-
-        final_list.reverse();
-
-        Ok(Self { list: final_list })
-    }
-}
-
-impl Iterator for Walk2 {
-    type Item = Result<ObjectId, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.list.pop().map(|id| Ok(id))
-    }
-}
-
 enum Either<'buf, 'cache> {
     CommitRefIter(gix_object::CommitRefIter<'buf>),
     CachedCommit(gix_commitgraph::file::Commit<'cache>),
@@ -537,20 +412,21 @@ fn collect_parents<'b, Find, E>(
     f: Find,
     id: &oid,
     buf: &'b mut Vec<u8>,
-) -> Result<SmallVec<[(ObjectId, u32, i64); 1]>, Error>
+) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error>
 where
     Find: for<'a> Fn(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    let mut parents = SmallVec::<[(ObjectId, u32, i64); 1]>::new();
+    let mut parents = SmallVec::<[(ObjectId, GenAndCommitTime); 1]>::new();
 
     match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
             for token in c {
+                use gix_object::commit::ref_iter::Token as T;
                 match token {
-                    Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
-                    Ok(gix_object::commit::ref_iter::Token::Parent { id }) => {
-                        parents.push((id, 0, 0)); // Dummy numbers to be filled in
+                    Ok(T::Tree { .. }) => continue,
+                    Ok(T::Parent { id }) => {
+                        parents.push((id, (0, 0))); // Dummy numbers to be filled in
                     }
                     Ok(_past_parents) => break,
                     Err(err) => return Err(err.into()),
@@ -558,30 +434,9 @@ where
             }
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
-            for (id, gen, time) in parents.iter_mut() {
-                (*gen, *time) = match find(cache, &f, id, buf)
-                    .map_err(|err| Error::CommitNotFound)?
-                {
-                    Either::CommitRefIter(c) => {
-                        let mut commit_time = 0;
-                        for token in c {
-                            match token {
-                                Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
-                                Ok(gix_object::commit::ref_iter::Token::Parent { .. }) => continue,
-                                Ok(gix_object::commit::ref_iter::Token::Committer {
-                                    signature,
-                                }) => {
-                                    commit_time = signature.time.seconds;
-                                    break;
-                                }
-                                Ok(_unused_token) => break,
-                                Err(err) => return Err(err.into()),
-                            }
-                        }
-                        (gix_commitgraph::GENERATION_NUMBER_INFINITY, commit_time)
-                    }
-                    Either::CachedCommit(c) => (c.generation(), c.committer_timestamp() as i64),
-                };
+            for (id, gen_time) in parents.iter_mut() {
+                let commit = find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)?;
+                *gen_time = get_gen_and_commit_time(commit)?;
             }
         }
         Either::CachedCommit(c) => {
@@ -591,14 +446,41 @@ where
                     .commit_at(pos?);
                 parents.push((
                     parent_commit.id().into(),
-                    parent_commit.generation(),
-                    parent_commit.committer_timestamp() as i64,
+                    (
+                        parent_commit.generation(),
+                        parent_commit.committer_timestamp() as i64,
+                    ),
                 ));
             }
         }
     };
 
     Ok(parents)
+}
+
+fn get_gen_and_commit_time<'cache, 'buf>(
+    c: Either<'buf, 'cache>,
+) -> Result<GenAndCommitTime, Error> {
+    match c {
+        Either::CommitRefIter(c) => {
+            let mut commit_time = 0;
+            for token in c {
+                use gix_object::commit::ref_iter::Token as T;
+                match token {
+                    Ok(T::Tree { .. }) => continue,
+                    Ok(T::Parent { .. }) => continue,
+                    Ok(T::Committer { signature }) => {
+                        commit_time = signature.time.seconds;
+                        break;
+                    }
+                    Ok(_unused_token) => break,
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            Ok((gix_commitgraph::GENERATION_NUMBER_INFINITY, commit_time))
+        }
+        Either::CachedCommit(c) => Ok((c.generation(), c.committer_timestamp() as i64)),
+    }
 }
 
 #[cfg(test)]
@@ -635,7 +517,6 @@ mod tests {
     }
 
     macro_rules! topo_test {
-        // ($test_name:ident, $range:literal) => {};
         ($test_name:ident, $range:literal) => {
             #[test]
             fn $test_name() {
@@ -643,7 +524,7 @@ mod tests {
                 let (start, end) = resolve(&repo, $range);
 
                 for (flag, sorting) in [
-                    ("--date-order", Sorting::TopoOrder),
+                    ("--date-order", Sorting::DateOrder),
                     ("--topo-order", Sorting::TopoOrder),
                 ] {
                     let walk = Walk::new(
@@ -657,26 +538,6 @@ mod tests {
 
                     compare(walk, flag, $range);
                 }
-            }
-        };
-    }
-
-    macro_rules! topo_test2 {
-        ($test_name:ident, $range:literal) => {};
-        ($test_name:ident, $range:literal) => {
-            #[test]
-            fn $test_name() {
-                let repo = gix::discover(".").unwrap();
-                let (start, end) = resolve(&repo, $range);
-
-                let walk = Walk2::new(
-                    |id, buf| repo.objects.find_commit_iter(id, buf),
-                    std::iter::once(start),
-                    end.map(|e| std::iter::once(e)),
-                )
-                .unwrap();
-
-                compare(walk, $range);
             }
         };
     }
@@ -695,7 +556,9 @@ mod tests {
             .map(gix::ObjectId::from_str)
             .collect::<Result<Vec<_>, _>>()
             .expect("rev-list returns valid object ids")
-    } // 753d1db: Initial commit
+    }
+
+    // 753d1db: Initial commit
     topo_test!(t01_753d1db, "753d1db");
 
     // f28f649: Simple change
@@ -862,4 +725,64 @@ mod tests {
     topo_test!(t16_13_616867d_00491e2, "616867d..00491e2");
     topo_test!(t16_14_bb48275_00491e2, "bb48275..00491e2");
     topo_test!(t16_15_bb8601c_00491e2, "bb8601c..00491e2");
+
+    // d87231e: More changes
+    topo_test!(t17_d87231e, "d87231e");
+    topo_test!(t17_01_753d1db_d87231e, "753d1db..d87231e");
+    topo_test!(t17_02_f28f649_d87231e, "f28f649..d87231e");
+    topo_test!(t17_03_d3baed3_d87231e, "d3baed3..d87231e");
+    topo_test!(t17_04_536a0f5_d87231e, "536a0f5..d87231e");
+    topo_test!(t17_05_6a30c80_d87231e, "6a30c80..d87231e");
+    topo_test!(t17_06_4d8a3c7_d87231e, "4d8a3c7..d87231e");
+    topo_test!(t17_07_2064b3c_d87231e, "2064b3c..d87231e");
+    topo_test!(t17_08_0e17ccb_d87231e, "0e17ccb..d87231e");
+    topo_test!(t17_09_3be8265_d87231e, "3be8265..d87231e");
+    topo_test!(t17_10_8bf8780_d87231e, "8bf8780..d87231e");
+    topo_test!(t17_11_f7a3a57_d87231e, "f7a3a57..d87231e");
+    topo_test!(t17_12_392db1b_d87231e, "392db1b..d87231e");
+    topo_test!(t17_13_616867d_d87231e, "616867d..d87231e");
+    topo_test!(t17_14_bb48275_d87231e, "bb48275..d87231e");
+    topo_test!(t17_15_bb8601c_d87231e, "bb8601c..d87231e");
+    topo_test!(t17_16_00491e2_d87231e, "00491e2..d87231e");
+
+    // 51c8d7c: Merge branch 'kek3' into third-test
+    topo_test!(t18_51c8d7c, "51c8d7c");
+    topo_test!(t18_01_753d1db_51c8d7c, "753d1db..51c8d7c");
+    topo_test!(t18_02_f28f649_51c8d7c, "f28f649..51c8d7c");
+    topo_test!(t18_03_d3baed3_51c8d7c, "d3baed3..51c8d7c");
+    topo_test!(t18_04_536a0f5_51c8d7c, "536a0f5..51c8d7c");
+    topo_test!(t18_05_6a30c80_51c8d7c, "6a30c80..51c8d7c");
+    topo_test!(t18_06_4d8a3c7_51c8d7c, "4d8a3c7..51c8d7c");
+    topo_test!(t18_07_2064b3c_51c8d7c, "2064b3c..51c8d7c");
+    topo_test!(t18_08_0e17ccb_51c8d7c, "0e17ccb..51c8d7c");
+    topo_test!(t18_09_3be8265_51c8d7c, "3be8265..51c8d7c");
+    topo_test!(t18_10_8bf8780_51c8d7c, "8bf8780..51c8d7c");
+    topo_test!(t18_11_f7a3a57_51c8d7c, "f7a3a57..51c8d7c");
+    topo_test!(t18_12_392db1b_51c8d7c, "392db1b..51c8d7c");
+    topo_test!(t18_13_616867d_51c8d7c, "616867d..51c8d7c");
+    topo_test!(t18_14_bb48275_51c8d7c, "bb48275..51c8d7c");
+    topo_test!(t18_15_bb8601c_51c8d7c, "bb8601c..51c8d7c");
+    topo_test!(t18_16_00491e2_51c8d7c, "00491e2..51c8d7c");
+    topo_test!(t18_17_d87231e_51c8d7c, "d87231e..51c8d7c");
+
+    // b282e76: More changes
+    topo_test!(t19_b282e76, "b282e76");
+    topo_test!(t19_01_753d1db_b282e76, "753d1db..b282e76");
+    topo_test!(t19_02_f28f649_b282e76, "f28f649..b282e76");
+    topo_test!(t19_03_d3baed3_b282e76, "d3baed3..b282e76");
+    topo_test!(t19_04_536a0f5_b282e76, "536a0f5..b282e76");
+    topo_test!(t19_05_6a30c80_b282e76, "6a30c80..b282e76");
+    topo_test!(t19_06_4d8a3c7_b282e76, "4d8a3c7..b282e76");
+    topo_test!(t19_07_2064b3c_b282e76, "2064b3c..b282e76");
+    topo_test!(t19_08_0e17ccb_b282e76, "0e17ccb..b282e76");
+    topo_test!(t19_09_3be8265_b282e76, "3be8265..b282e76");
+    topo_test!(t19_10_8bf8780_b282e76, "8bf8780..b282e76");
+    topo_test!(t19_11_f7a3a57_b282e76, "f7a3a57..b282e76");
+    topo_test!(t19_12_392db1b_b282e76, "392db1b..b282e76");
+    topo_test!(t19_13_616867d_b282e76, "616867d..b282e76");
+    topo_test!(t19_14_bb48275_b282e76, "bb48275..b282e76");
+    topo_test!(t19_15_bb8601c_b282e76, "bb8601c..b282e76");
+    topo_test!(t19_16_00491e2_b282e76, "00491e2..b282e76");
+    topo_test!(t19_17_d87231e_b282e76, "d87231e..b282e76");
+    topo_test!(t19_18_51c8d7c_b282e76, "51c8d7c..b282e76");
 }
