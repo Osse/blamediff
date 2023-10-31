@@ -54,8 +54,14 @@ pub enum Error {
     Ancestor(#[from] gix_traverse::commit::ancestors::Error),
 }
 
+/// Sorting to use for the topological walk
 pub enum Sorting {
+    /// Show no parents before all of its children are shown, but otherwise show
+    /// commits in the commit timestamp order.
     DateOrder,
+
+    /// Show no parents before all of its children are shown, and avoid
+    /// showing commits on multiple lines of history intermixed.
     TopoOrder,
 }
 
@@ -84,13 +90,48 @@ impl std::cmp::PartialOrd for Key {
     }
 }
 
+// Git's priority queue works as a LIFO stack if no compare function is set,
+// which is the case for --topo-order
+enum Queue {
+    Date(PriorityQueue<i64, ObjectId>),
+    Topo(Vec<ObjectId>),
+}
+
+impl Queue {
+    fn new(s: Sorting) -> Self {
+        match s {
+            Sorting::DateOrder => Self::Date(PriorityQueue::new()),
+            Sorting::TopoOrder => Self::Topo(vec![]),
+        }
+    }
+
+    fn push(&mut self, commit_time: i64, id: ObjectId) {
+        match self {
+            Self::Date(q) => q.insert(commit_time, id),
+            Self::Topo(q) => q.push(id),
+        }
+    }
+
+    fn pop(&mut self) -> Option<ObjectId> {
+        match self {
+            Self::Date(q) => q.pop().map(|(_, id)| id),
+            Self::Topo(q) => q.pop(),
+        }
+    }
+
+    fn reverse(&mut self) {
+        if let Queue::Topo(q) = self {
+            q.reverse();
+        }
+    }
+}
+
 // #[derive(Debug)]
 type WalkState = FlagSet<WalkFlags>;
 
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
 /// necessarily up to date.
-// pub struct Walk<'repo> {
 pub struct Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -102,7 +143,7 @@ where
     states: IdMap<WalkState>,
     explore_queue: PriorityQueue<u32, ObjectId>,
     indegree_queue: PriorityQueue<u32, ObjectId>,
-    topo_queue: Vec<ObjectId>,
+    topo_queue: Queue,
     min_gen: u32,
     buf: Vec<u8>,
 }
@@ -119,6 +160,7 @@ where
     pub fn new(
         commit_graph: gix_commitgraph::Graph,
         f: Find,
+        sorting: Sorting,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
         ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
     ) -> Result<Self, Error> {
@@ -129,7 +171,7 @@ where
             states: IdMap::default(),
             explore_queue: PriorityQueue::new(),
             indegree_queue: PriorityQueue::new(),
-            topo_queue: vec![],
+            topo_queue: Queue::new(sorting),
             min_gen: gix_commitgraph::GENERATION_NUMBER_INFINITY,
             buf: vec![],
         };
@@ -172,7 +214,7 @@ where
         // reason. See handle_commit()
         for id in &ends {
             let parents = s.collect_parents(id)?;
-            for (id, _) in parents {
+            for (id, _, _) in parents {
                 s.states
                     .entry(id)
                     .and_modify(|s| *s |= WalkFlags::Uninteresting)
@@ -188,7 +230,32 @@ where
             // NOTE: in Git the ends are also added to the topo_queue, but then
             // in simplify_commit() Git is told to ignore it. For now the tests pass.
             if i == 1 {
-                s.topo_queue.push(*id);
+                let commit = find(Some(&s.commit_graph), &s.find, id, &mut s.buf)
+                    .map_err(|_err| Error::CommitNotFound)?;
+
+                let (gen, time) = match commit {
+                    Either::CommitRefIter(c) => {
+                        let mut commit_time = 0;
+                        for token in c {
+                            match token {
+                                Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
+                                Ok(gix_object::commit::ref_iter::Token::Parent { .. }) => continue,
+                                Ok(gix_object::commit::ref_iter::Token::Committer {
+                                    signature,
+                                }) => {
+                                    commit_time = signature.time.seconds;
+                                    break;
+                                }
+                                Ok(_unused_token) => break,
+                                Err(err) => return Err(err.into()),
+                            }
+                        }
+                        (gix_commitgraph::GENERATION_NUMBER_INFINITY, commit_time)
+                    }
+                    Either::CachedCommit(c) => (c.generation(), c.committer_timestamp() as i64),
+                };
+
+                s.topo_queue.push(time, *id);
             }
         }
 
@@ -215,7 +282,7 @@ where
 
             let parents = self.collect_parents(&id)?;
 
-            for (id, gen) in parents {
+            for (id, gen, _) in parents {
                 self.indegrees
                     .entry(id)
                     .and_modify(|e| *e += 1)
@@ -251,7 +318,7 @@ where
 
             self.process_parents(&id, &parents)?;
 
-            for (id, gen) in parents {
+            for (id, gen, _) in parents {
                 let state = self.states.get_mut(&id).ok_or(Error::MissingState)?;
 
                 if !state.contains(WalkFlags::Explored) {
@@ -269,7 +336,7 @@ where
 
         self.process_parents(id, &parents)?;
 
-        for (pid, parent_gen) in parents {
+        for (pid, parent_gen, parent_commit_time) in parents {
             let parent_state = self.states.get(&pid).ok_or(Error::MissingState)?;
 
             if parent_state.contains(WalkFlags::Uninteresting) {
@@ -286,14 +353,14 @@ where
             *i -= 1;
 
             if *i == 1 {
-                self.topo_queue.push(pid);
+                self.topo_queue.push(parent_commit_time, pid);
             }
         }
 
         Ok(())
     }
 
-    fn process_parents(&mut self, id: &oid, parents: &[(ObjectId, u32)]) -> Result<(), Error> {
+    fn process_parents(&mut self, id: &oid, parents: &[(ObjectId, u32, i64)]) -> Result<(), Error> {
         let state = self.states.get_mut(id).ok_or(Error::MissingState)?;
 
         if state.contains(WalkFlags::Added) {
@@ -312,7 +379,7 @@ where
             (flags, flags | WalkFlags::Seen)
         };
 
-        for (id, _) in parents {
+        for (id, _, _) in parents {
             self.states
                 .entry(*id)
                 .and_modify(|s| *s |= pass)
@@ -322,7 +389,7 @@ where
         Ok(())
     }
 
-    fn collect_parents(&mut self, id: &oid) -> Result<SmallVec<[(ObjectId, u32); 1]>, Error> {
+    fn collect_parents(&mut self, id: &oid) -> Result<SmallVec<[(ObjectId, u32, i64); 1]>, Error> {
         collect_parents(Some(&self.commit_graph), &self.find, id, &mut self.buf)
     }
 }
@@ -470,12 +537,12 @@ fn collect_parents<'b, Find, E>(
     f: Find,
     id: &oid,
     buf: &'b mut Vec<u8>,
-) -> Result<SmallVec<[(ObjectId, u32); 1]>, Error>
+) -> Result<SmallVec<[(ObjectId, u32, i64); 1]>, Error>
 where
     Find: for<'a> Fn(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    let mut parents = SmallVec::<[(ObjectId, u32); 1]>::new();
+    let mut parents = SmallVec::<[(ObjectId, u32, i64); 1]>::new();
 
     match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
@@ -483,7 +550,7 @@ where
                 match token {
                     Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
                     Ok(gix_object::commit::ref_iter::Token::Parent { id }) => {
-                        parents.push((id, 0)); // Dummy generation number to be filled in
+                        parents.push((id, 0, 0)); // Dummy numbers to be filled in
                     }
                     Ok(_past_parents) => break,
                     Err(err) => return Err(err.into()),
@@ -491,10 +558,29 @@ where
             }
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
-            for (id, gen) in parents.iter_mut() {
-                *gen = match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
-                    Either::CommitRefIter(c) => gix_commitgraph::GENERATION_NUMBER_INFINITY,
-                    Either::CachedCommit(c) => c.generation(),
+            for (id, gen, time) in parents.iter_mut() {
+                (*gen, *time) = match find(cache, &f, id, buf)
+                    .map_err(|err| Error::CommitNotFound)?
+                {
+                    Either::CommitRefIter(c) => {
+                        let mut commit_time = 0;
+                        for token in c {
+                            match token {
+                                Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
+                                Ok(gix_object::commit::ref_iter::Token::Parent { .. }) => continue,
+                                Ok(gix_object::commit::ref_iter::Token::Committer {
+                                    signature,
+                                }) => {
+                                    commit_time = signature.time.seconds;
+                                    break;
+                                }
+                                Ok(_unused_token) => break,
+                                Err(err) => return Err(err.into()),
+                            }
+                        }
+                        (gix_commitgraph::GENERATION_NUMBER_INFINITY, commit_time)
+                    }
+                    Either::CachedCommit(c) => (c.generation(), c.committer_timestamp() as i64),
                 };
             }
         }
@@ -503,7 +589,11 @@ where
                 let parent_commit = cache
                     .expect("cache exists if CachedCommit was returned")
                     .commit_at(pos?);
-                parents.push((parent_commit.id().into(), parent_commit.generation()));
+                parents.push((
+                    parent_commit.id().into(),
+                    parent_commit.generation(),
+                    parent_commit.committer_timestamp() as i64,
+                ));
             }
         }
     };
@@ -530,15 +620,18 @@ mod tests {
         }
     }
 
-    fn compare<I, E>(iter: I, range: &str)
+    fn compare<I, E>(iter: I, order_flag: &str, range: &str)
     where
         I: Iterator<Item = Result<gix::ObjectId, E>>,
         E: std::error::Error,
     {
         let mine = iter.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = git_rev_list(&["--topo-order", range]);
+        let fasit = git_rev_list(&[order_flag, range]);
 
-        assert_eq!(&mine, &fasit, "left = mine, right = fasit");
+        assert_eq!(
+            &mine, &fasit,
+            "left = mine, right = fasit, flag = {order_flag}",
+        );
     }
 
     macro_rules! topo_test {
@@ -549,15 +642,21 @@ mod tests {
                 let repo = gix::discover(".").unwrap();
                 let (start, end) = resolve(&repo, $range);
 
-                let walk = Walk::new(
-                    repo.commit_graph().unwrap(),
-                    |id, buf| repo.objects.find_commit_iter(id, buf),
-                    std::iter::once(start),
-                    end.map(|e| std::iter::once(e)),
-                )
-                .unwrap();
+                for (flag, sorting) in [
+                    ("--date-order", Sorting::TopoOrder),
+                    ("--topo-order", Sorting::TopoOrder),
+                ] {
+                    let walk = Walk::new(
+                        repo.commit_graph().unwrap(),
+                        |id, buf| repo.objects.find_commit_iter(id, buf),
+                        sorting,
+                        std::iter::once(start),
+                        end.map(|e| std::iter::once(e)),
+                    )
+                    .unwrap();
 
-                compare(walk, $range);
+                    compare(walk, flag, $range);
+                }
             }
         };
     }
