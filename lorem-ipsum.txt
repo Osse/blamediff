@@ -12,7 +12,7 @@ vel, iaculis nibh.
 Vestibulum mollis non urna vitae aliquet. Proin ultricies erat in erat euismod
 tincidunt. Aenean ut ipsum eros. Sed ac posuere quam, vel feugiat dolor. Donec
 convallis hendrerit finibus. Sed vel metus tellus. Praesent euismod sapien id
-Et glass er stort.
+Et glass er stort. Det er veldig stort.
 Et bilde henger på veggen.
     Mange forskjellige walkie-talkies.
     rutrum faucibus tellus. Nam tellus lorem, vestibulum eget dolor ut, mollis
