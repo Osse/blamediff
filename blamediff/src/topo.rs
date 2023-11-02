@@ -15,7 +15,7 @@ use ::trace::trace;
 trace::init_depth_var!();
 
 flags! {
-    // Set of flags to describe the state of a particular commit while iterating.
+    /// Set of flags to describe the state of a particular commit while iterating.
     enum WalkFlags: u32 {
         /// TODO: Unused?
         Seen,
@@ -55,6 +55,7 @@ pub enum Error {
 }
 
 /// Sorting to use for the topological walk
+#[derive(Clone, Copy)]
 pub enum Sorting {
     /// Show no parents before all of its children are shown, but otherwise show
     /// commits in the commit timestamp order.
@@ -65,6 +66,16 @@ pub enum Sorting {
     TopoOrder,
 }
 
+/// Specify how to handle commit parents during traversal.
+#[derive(Clone, Copy)]
+pub enum Parents {
+    /// Traverse all parents, useful for traversing the entire ancestry.
+    All,
+
+    ///Only traverse along the first parent, which commonly ignores all branches.
+    First,
+}
+
 // Git's priority queue works as a LIFO stack if no compare function is set,
 // which is the case for --topo-order
 enum Queue {
@@ -72,6 +83,7 @@ enum Queue {
     Topo(Vec<ObjectId>),
 }
 
+// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
 impl Queue {
     fn new(s: Sorting) -> Self {
         match s {
@@ -103,7 +115,6 @@ impl Queue {
 
 type GenAndCommitTime = (u32, i64);
 
-// #[derive(Debug)]
 type WalkState = FlagSet<WalkFlags>;
 
 /// A commit walker that walks in topographical order, like `git rev-list
@@ -121,11 +132,16 @@ where
     explore_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
     indegree_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
     topo_queue: Queue,
+    parents: Parents,
     min_gen: u32,
     buf: Vec<u8>,
 }
 
-// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
+// #[trace(
+//     disable(new, from_iters, from_specs),
+//     prefix_enter = "",
+//     prefix_exit = ""
+// )]
 impl<Find, E> Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -138,6 +154,7 @@ where
         commit_graph: gix_commitgraph::Graph,
         f: Find,
         sorting: Sorting,
+        parents: Parents,
         tips: &[gix::ObjectId],
         ends: &[gix::ObjectId],
     ) -> Result<Self, Error> {
@@ -149,6 +166,7 @@ where
             explore_queue: PriorityQueue::new(),
             indegree_queue: PriorityQueue::new(),
             topo_queue: Queue::new(sorting),
+            parents,
             min_gen: gix_commitgraph::GENERATION_NUMBER_INFINITY,
             buf: vec![],
         };
@@ -165,6 +183,7 @@ where
         commit_graph: gix_commitgraph::Graph,
         f: Find,
         sorting: Sorting,
+        parents: Parents,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
         ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
     ) -> Result<Self, Error> {
@@ -173,7 +192,7 @@ where
             .map(|e| e.into_iter().map(Into::into).collect::<Vec<_>>())
             .unwrap_or_default();
 
-        Self::new(commit_graph, f, sorting, &tips, &ends)
+        Self::new(commit_graph, f, sorting, parents, &tips, &ends)
     }
 
     /// Create a new Walk that walks the given repository, starting at the
@@ -183,6 +202,7 @@ where
         commit_graph: gix_commitgraph::Graph,
         f: Find,
         sorting: Sorting,
+        parents: Parents,
         specs: impl IntoIterator<Item = gix_revision::Spec>,
     ) -> Result<Self, Error> {
         let mut tips = vec![];
@@ -203,7 +223,7 @@ where
             }
         }
 
-        Self::new(commit_graph, f, sorting, &tips, &ends)
+        Self::new(commit_graph, f, sorting, parents, &tips, &ends)
     }
 
     fn init(&mut self, tips: &[gix::ObjectId], ends: &[gix::ObjectId]) -> Result<(), Error> {
@@ -236,7 +256,7 @@ where
         // NOTE: Parents of ends must also be marked uninteresting for some
         // reason. See handle_commit()
         for id in ends {
-            let parents = self.collect_parents(id)?;
+            let parents = self.collect_all_parents(id)?;
             for (id, _) in parents {
                 self.states
                     .entry(id)
@@ -376,10 +396,22 @@ where
 
         *state |= WalkFlags::Added;
 
-        // If the current commit is uninteresting we pass that on to parents,
+        // If the current commit is uninteresting we pass that on to ALL parents,
         // otherwise we pass SymmetricLeft and AncestryPath + Seen
         let (pass, insert) = if state.contains(WalkFlags::Uninteresting) {
             let flags = WalkFlags::Uninteresting.into();
+
+            for (id, _) in parents {
+                let grand_parents = self.collect_all_parents(id)?;
+
+                for (id, _) in &grand_parents {
+                    self.states
+                        .entry(*id)
+                        .and_modify(|s| *s |= WalkFlags::Uninteresting)
+                        .or_insert(WalkFlags::Uninteresting | WalkFlags::Seen);
+                }
+            }
+
             (flags, flags)
         } else {
             let flags = *state & (WalkFlags::SymmetricLeft | WalkFlags::AncestryPath);
@@ -400,11 +432,31 @@ where
         &mut self,
         id: &oid,
     ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error> {
-        collect_parents(Some(&self.commit_graph), &self.find, id, &mut self.buf)
+        collect_parents(
+            Some(&self.commit_graph),
+            &self.find,
+            id,
+            matches!(self.parents, Parents::First),
+            &mut self.buf,
+        )
+    }
+
+    // Same as collect_parents but disregards the first_parent flag
+    fn collect_all_parents(
+        &mut self,
+        id: &oid,
+    ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error> {
+        collect_parents(
+            Some(&self.commit_graph),
+            &self.find,
+            id,
+            false,
+            &mut self.buf,
+        )
     }
 }
 
-// #[trace(prefix_enter = "", prefix_exit = "")]
+#[trace(prefix_enter = "", prefix_exit = "")]
 impl<Find, E> Iterator for Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -460,6 +512,7 @@ fn collect_parents<'b, Find, E>(
     cache: Option<&gix_commitgraph::Graph>,
     f: Find,
     id: &oid,
+    first_only: bool,
     buf: &'b mut Vec<u8>,
 ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error>
 where
@@ -476,6 +529,9 @@ where
                     Ok(T::Tree { .. }) => continue,
                     Ok(T::Parent { id }) => {
                         parents.push((id, (0, 0))); // Dummy numbers to be filled in
+                        if first_only {
+                            break;
+                        }
                     }
                     Ok(_past_parents) => break,
                     Err(err) => return Err(err.into()),
@@ -500,6 +556,9 @@ where
                         parent_commit.committer_timestamp() as i64,
                     ),
                 ));
+                if first_only {
+                    break;
+                }
             }
         }
     };
@@ -544,10 +603,15 @@ mod tests {
         ("--topo-order", Sorting::TopoOrder),
     ];
 
-    fn git_rev_list(flag: &str, args: &[&str]) -> Vec<gix::ObjectId> {
+    const PARENTS: [(&str, Parents); 2] = [
+        ("--invert-grep", Parents::All), // Dummy flag
+        ("--first-parent", Parents::First),
+    ];
+
+    fn git_rev_list(flags: &[&str], args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
             .arg("rev-list")
-            .arg(flag)
+            .args(flags)
             .args(args)
             .output()
             .expect("able to run git rev-list")
@@ -568,19 +632,22 @@ mod tests {
                 let repo = gix::discover(".").unwrap();
                 let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
 
-                for (flag, sorting) in SORTINGS {
-                    let walk = Walk::from_specs(
-                        repo.commit_graph().unwrap(),
-                        |id, buf| repo.objects.find_commit_iter(id, buf),
-                        sorting,
-                        specs.into_iter()
-                    )
-                    .unwrap();
+                for (flag1, sorting) in SORTINGS {
+                    for (flag2, parents) in PARENTS {
+                        let walk = Walk::from_specs(
+                            repo.commit_graph().unwrap(),
+                            |id, buf| repo.objects.find_commit_iter(id, buf),
+                            sorting,
+                            parents,
+                            specs.into_iter()
+                        )
+                        .unwrap();
 
-                    let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                    let git_ids = git_rev_list(flag, &[$($spec),+]);
+                        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                        let git_ids = git_rev_list(&[flag1, flag2], &[$($spec),+]);
 
-                    assert_eq!(ids, git_ids, "left = ids, right = git_ids, flag = {flag}");
+                        assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {flag1} {flag2}");
+                    }
                 }
             }
         };
