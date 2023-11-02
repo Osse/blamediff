@@ -539,6 +539,11 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    const SORTINGS: [(&str, Sorting); 2] = [
+        ("--date-order", Sorting::DateOrder),
+        ("--topo-order", Sorting::TopoOrder),
+    ];
+
     fn git_rev_list(flag: &str, args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
             .arg("rev-list")
@@ -556,17 +561,6 @@ mod tests {
             .expect("rev-list returns valid object ids")
     }
 
-    fn compare<I, E>(iter: I, flag: &str, args: &[&str])
-    where
-        I: Iterator<Item = Result<gix::ObjectId, E>>,
-        E: std::error::Error,
-    {
-        let mine = iter.collect::<Result<Vec<_>, _>>().unwrap();
-        let fasit = git_rev_list(flag, args);
-
-        assert_eq!(&mine, &fasit, "left = mine, right = fasit, flag = {flag}");
-    }
-
     macro_rules! topo_test {
         ($test_name:ident, $($spec:literal),+) => {
             #[test]
@@ -574,10 +568,7 @@ mod tests {
                 let repo = gix::discover(".").unwrap();
                 let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
 
-                for (flag, sorting) in [
-                    ("--date-order", Sorting::DateOrder),
-                    ("--topo-order", Sorting::TopoOrder),
-                ] {
+                for (flag, sorting) in SORTINGS {
                     let walk = Walk::from_specs(
                         repo.commit_graph().unwrap(),
                         |id, buf| repo.objects.find_commit_iter(id, buf),
@@ -586,7 +577,10 @@ mod tests {
                     )
                     .unwrap();
 
-                    compare(walk, flag, &[$($spec),+]);
+                    let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                    let git_ids = git_rev_list(flag, &[$($spec),+]);
+
+                    assert_eq!(ids, git_ids, "left = ids, right = git_ids, flag = {flag}");
                 }
             }
         };
