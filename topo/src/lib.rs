@@ -1,9 +1,5 @@
-use std::cmp::Reverse;
-
 use gix_commitgraph::Graph;
 use gix_hash::{oid, ObjectId};
-use gix_hashtable::hash_map::Entry;
-use gix_object::date::SecondsSinceUnixEpoch;
 use gix_odb::FindExt;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
@@ -155,8 +151,8 @@ where
         f: Find,
         sorting: Sorting,
         parents: Parents,
-        tips: &[gix::ObjectId],
-        ends: &[gix::ObjectId],
+        tips: &[ObjectId],
+        ends: &[ObjectId],
     ) -> Result<Self, Error> {
         let mut s = Self {
             commit_graph,
@@ -171,7 +167,7 @@ where
             buf: vec![],
         };
 
-        s.init(tips, ends);
+        s.init(tips, ends)?;
 
         Ok(s)
     }
@@ -226,7 +222,7 @@ where
         Self::new(commit_graph, f, sorting, parents, &tips, &ends)
     }
 
-    fn init(&mut self, tips: &[gix::ObjectId], ends: &[gix::ObjectId]) -> Result<(), Error> {
+    fn init(&mut self, tips: &[ObjectId], ends: &[ObjectId]) -> Result<(), Error> {
         let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
         let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
 
@@ -600,7 +596,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn git_rev_list(flags: &[&str], args: &[&str]) -> Vec<gix::ObjectId> {
+    fn git_rev_list(flags: &[&str], args: &[&str]) -> Vec<ObjectId> {
         let output = std::process::Command::new("git")
             .arg("rev-list")
             .args(flags)
@@ -612,7 +608,7 @@ mod tests {
         std::str::from_utf8(&output)
             .expect("sensible output from git rev-list")
             .split_terminator('\n')
-            .map(gix::ObjectId::from_str)
+            .map(ObjectId::from_str)
             .collect::<Result<Vec<_>, _>>()
             .expect("rev-list returns valid object ids")
     }

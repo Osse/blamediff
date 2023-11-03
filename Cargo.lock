@@ -120,22 +120,10 @@ dependencies = [
  "anyhow",
  "clap",
  "culpa",
- "flagset",
  "gix",
- "gix-commitgraph",
- "gix-hash",
- "gix-hashtable",
- "gix-object",
- "gix-odb",
- "gix-revision",
- "gix-revwalk",
- "gix-traverse",
  "pretty_assertions",
- "smallvec",
  "test-case",
- "thiserror",
  "time",
- "trace",
 ]
 
 [[package]]
@@ -1738,6 +1726,27 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "topo"
+version = "0.1.0"
+dependencies = [
+ "flagset",
+ "gix",
+ "gix-commitgraph",
+ "gix-hash",
+ "gix-hashtable",
+ "gix-object",
+ "gix-odb",
+ "gix-revision",
+ "gix-revwalk",
+ "gix-traverse",
+ "pretty_assertions",
+ "smallvec",
+ "test-case",
+ "thiserror",
+ "trace",
+]
 
 [[package]]
 name = "trace"

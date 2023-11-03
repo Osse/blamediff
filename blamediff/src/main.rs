@@ -27,8 +27,6 @@ use time::macros::format_description;
 mod error;
 use error::BlameDiffError;
 
-mod topo;
-
 mod log;
 
 #[derive(Args)]
