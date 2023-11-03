@@ -622,38 +622,61 @@ mod tests {
             .expect("rev-list returns valid object ids")
     }
 
+    fn test_body(sorting: Sorting, parents: Parents, raw_specs: &[&str]) {
+        let repo = gix::discover(".").unwrap();
+        let specs = raw_specs
+            .iter()
+            .map(|s| repo.rev_parse(*s).expect("valid spec").detach())
+            .collect::<Vec<_>>();
+
+        let walk = Walk::from_specs(
+            repo.commit_graph().unwrap(),
+            |id, buf| repo.objects.find_commit_iter(id, buf),
+            sorting,
+            parents,
+            specs.iter().cloned(),
+        )
+        .unwrap();
+
+        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
+        let git_ids = git_rev_list(sorting, parents, raw_specs);
+
+        assert_eq!(
+            ids, git_ids,
+            "left = ids, right = git_ids, flags = {parents:?} {sorting:?}"
+        );
+    }
+
     macro_rules! topo_test {
+        ($test_name:ident, $($spec:literal),+) => {
+            #[cfg(feature = "alltests")]
+            #[test_matrix(
+                [ DateOrder, TopoOrder ],
+                [ All, First ]
+            )]
+            fn $test_name(sorting: Sorting, parents: Parents) {
+                test_body(sorting, parents, &[$($spec),+]);
+            }
+        };
+    }
+
+    macro_rules! topo_chosen_test {
         ($test_name:ident, $($spec:literal),+) => {
             #[test_matrix(
                 [ DateOrder, TopoOrder ],
                 [ All, First ]
             )]
             fn $test_name(sorting: Sorting, parents: Parents) {
-                let repo = gix::discover(".").unwrap();
-                let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
-
-                let walk = Walk::from_specs(
-                    repo.commit_graph().unwrap(),
-                    |id, buf| repo.objects.find_commit_iter(id, buf),
-                    sorting,
-                    parents,
-                    specs.iter().cloned()
-                )
-                .unwrap();
-
-                let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let git_ids = git_rev_list(sorting, parents, &[$($spec),+]);
-
-                assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {parents:?} {sorting:?}");
+                test_body(sorting, parents, &[$($spec),+]);
             }
         };
     }
 
     // 753d1db: Initial commit
-    topo_test!(t01_753d1db, "753d1db");
+    topo_chosen_test!(t01_753d1db, "753d1db");
 
     // f28f649: Simple change
-    topo_test!(t02_f28f649, "f28f649");
+    topo_chosen_test!(t02_f28f649, "f28f649");
     topo_test!(t02_01_753d1db_f28f649, "753d1db..f28f649");
 
     // d3baed3: Removes more than it adds
@@ -705,7 +728,7 @@ mod tests {
     topo_test!(t09_3be8265, "3be8265");
     topo_test!(t09_01_753d1db_3be8265, "753d1db..3be8265");
     topo_test!(t09_02_f28f649_3be8265, "f28f649..3be8265");
-    topo_test!(t09_03_d3baed3_3be8265, "d3baed3..3be8265");
+    topo_chosen_test!(t09_03_d3baed3_3be8265, "d3baed3..3be8265");
     topo_test!(t09_04_536a0f5_3be8265, "536a0f5..3be8265");
     topo_test!(t09_05_6a30c80_3be8265, "6a30c80..3be8265");
     topo_test!(t09_06_4d8a3c7_3be8265, "4d8a3c7..3be8265");
@@ -791,12 +814,12 @@ mod tests {
     topo_test!(t15_05_6a30c80_bb8601c, "6a30c80..bb8601c");
     topo_test!(t15_06_4d8a3c7_bb8601c, "4d8a3c7..bb8601c");
     topo_test!(t15_07_2064b3c_bb8601c, "2064b3c..bb8601c");
-    topo_test!(t15_08_0e17ccb_bb8601c, "0e17ccb..bb8601c");
+    topo_chosen_test!(t15_08_0e17ccb_bb8601c, "0e17ccb..bb8601c");
     topo_test!(t15_09_3be8265_bb8601c, "3be8265..bb8601c");
     topo_test!(t15_10_8bf8780_bb8601c, "8bf8780..bb8601c");
     topo_test!(t15_11_f7a3a57_bb8601c, "f7a3a57..bb8601c");
     topo_test!(t15_12_392db1b_bb8601c, "392db1b..bb8601c");
-    topo_test!(t15_13_616867d_bb8601c, "616867d..bb8601c");
+    topo_chosen_test!(t15_13_616867d_bb8601c, "616867d..bb8601c");
     topo_test!(t15_14_bb48275_bb8601c, "bb48275..bb8601c");
 
     // 00491e2: Multiple changes in one commit again
@@ -831,10 +854,10 @@ mod tests {
     topo_test!(t17_10_8bf8780_d87231e, "8bf8780..d87231e");
     topo_test!(t17_11_f7a3a57_d87231e, "f7a3a57..d87231e");
     topo_test!(t17_12_392db1b_d87231e, "392db1b..d87231e");
-    topo_test!(t17_13_616867d_d87231e, "616867d..d87231e");
+    topo_chosen_test!(t17_13_616867d_d87231e, "616867d..d87231e");
     topo_test!(t17_14_bb48275_d87231e, "bb48275..d87231e");
     topo_test!(t17_15_bb8601c_d87231e, "bb8601c..d87231e");
-    topo_test!(t17_16_00491e2_d87231e, "00491e2..d87231e");
+    topo_chosen_test!(t17_16_00491e2_d87231e, "00491e2..d87231e");
 
     // 51c8d7c: Merge branch 'kek3' into third-test
     topo_test!(t18_51c8d7c, "51c8d7c");
@@ -850,8 +873,8 @@ mod tests {
     topo_test!(t18_10_8bf8780_51c8d7c, "8bf8780..51c8d7c");
     topo_test!(t18_11_f7a3a57_51c8d7c, "f7a3a57..51c8d7c");
     topo_test!(t18_12_392db1b_51c8d7c, "392db1b..51c8d7c");
-    topo_test!(t18_13_616867d_51c8d7c, "616867d..51c8d7c");
-    topo_test!(t18_14_bb48275_51c8d7c, "bb48275..51c8d7c");
+    topo_chosen_test!(t18_13_616867d_51c8d7c, "616867d..51c8d7c");
+    topo_chosen_test!(t18_14_bb48275_51c8d7c, "bb48275..51c8d7c");
     topo_test!(t18_15_bb8601c_51c8d7c, "bb8601c..51c8d7c");
     topo_test!(t18_16_00491e2_51c8d7c, "00491e2..51c8d7c");
     topo_test!(t18_17_d87231e_51c8d7c, "d87231e..51c8d7c");
@@ -865,7 +888,7 @@ mod tests {
     topo_test!(t19_05_6a30c80_b282e76, "6a30c80..b282e76");
     topo_test!(t19_06_4d8a3c7_b282e76, "4d8a3c7..b282e76");
     topo_test!(t19_07_2064b3c_b282e76, "2064b3c..b282e76");
-    topo_test!(t19_08_0e17ccb_b282e76, "0e17ccb..b282e76");
+    topo_chosen_test!(t19_08_0e17ccb_b282e76, "0e17ccb..b282e76");
     topo_test!(t19_09_3be8265_b282e76, "3be8265..b282e76");
     topo_test!(t19_10_8bf8780_b282e76, "8bf8780..b282e76");
     topo_test!(t19_11_f7a3a57_b282e76, "f7a3a57..b282e76");
@@ -877,5 +900,5 @@ mod tests {
     topo_test!(t19_17_d87231e_b282e76, "d87231e..b282e76");
     topo_test!(t19_18_51c8d7c_b282e76, "51c8d7c..b282e76");
 
-    topo_test!(t20, "b282e76", "^616867d", "^bb48275");
+    topo_chosen_test!(t20, "b282e76", "^616867d", "^bb48275");
 }

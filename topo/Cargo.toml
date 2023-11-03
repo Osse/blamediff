@@ -24,3 +24,7 @@ trace = "0.1"
 gix = "0.54"
 pretty_assertions = "1.4"
 test-case = "3.2.1"
+
+[features]
+## Run _all_ tests instead of a few chosen ones
+alltests = []
