@@ -50,7 +50,7 @@ pub enum Error {
 }
 
 /// Sorting to use for the topological walk
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Sorting {
     /// Show no parents before all of its children are shown, but otherwise show
     /// commits in the commit timestamp order.
@@ -62,7 +62,7 @@ pub enum Sorting {
 }
 
 /// Specify how to handle commit parents during traversal.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Parents {
     /// Traverse all parents, useful for traversing the entire ancestry.
     All,
@@ -594,11 +594,22 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn git_rev_list(flags: &[&str], args: &[&str]) -> Vec<ObjectId> {
+    // Just to make the generated test case names a bit shorter
+    use Parents::{All, First};
+    use Sorting::{DateOrder, TopoOrder};
+
+    fn git_rev_list(sorting: Sorting, parents: Parents, specs: &[&str]) -> Vec<ObjectId> {
+        let flags: &[&str] = match (parents, sorting) {
+            (All, DateOrder) => &["--date-order"],
+            (All, TopoOrder) => &["--topo-order"],
+            (First, DateOrder) => &["--first-parent", "--date-order"],
+            (First, TopoOrder) => &["--first-parent", "--topo-order"],
+        };
+
         let output = std::process::Command::new("git")
             .arg("rev-list")
             .args(flags)
-            .args(args)
+            .args(specs)
             .output()
             .expect("able to run git rev-list")
             .stdout;
@@ -611,16 +622,13 @@ mod tests {
             .expect("rev-list returns valid object ids")
     }
 
-    // "--invert-grep" is used as a dummy placeholder flag since we need a flag,
-    // but one that doesn't have an effect.  "--no-first-parents" does not exist
-    // :(
     macro_rules! topo_test {
         ($test_name:ident, $($spec:literal),+) => {
             #[test_matrix(
-                [ ("--date-order", Sorting::DateOrder), ("--topo-order", Sorting::TopoOrder) ],
-                [ ("--invert-grep", Parents::All), ("--first-parent", Parents::First) ]
+                [ DateOrder, TopoOrder ],
+                [ All, First ]
             )]
-            fn $test_name((sort_flag, sorting): (&str, Sorting), (parent_flag, parents): (&str, Parents)) {
+            fn $test_name(sorting: Sorting, parents: Parents) {
                 let repo = gix::discover(".").unwrap();
                 let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
 
@@ -634,9 +642,9 @@ mod tests {
                 .unwrap();
 
                 let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                let git_ids = git_rev_list(&[sort_flag, parent_flag], &[$($spec),+]);
+                let git_ids = git_rev_list(sorting, parents, &[$($spec),+]);
 
-                assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {sort_flag} {parent_flag}");
+                assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {parents:?} {sorting:?}");
             }
         };
     }
