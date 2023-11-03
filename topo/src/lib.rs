@@ -1,6 +1,5 @@
 use gix_commitgraph::Graph;
 use gix_hash::{oid, ObjectId};
-use gix_odb::FindExt;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
 use flagset::{flags, FlagSet};
@@ -213,7 +212,7 @@ where
                     tips.push(to);
                     ends.push(from)
                 }
-                S::Merge { theirs, ours } => todo!(),
+                S::Merge { .. } => todo!(),
                 S::IncludeOnlyParents(_) => todo!(),
                 S::ExcludeParents(_) => todo!(),
             }
@@ -272,7 +271,7 @@ where
                 let commit = find(Some(&self.commit_graph), &self.find, id, &mut self.buf)
                     .map_err(|_err| Error::CommitNotFound)?;
 
-                let (gen, time) = get_gen_and_commit_time(commit)?;
+                let (_, time) = get_gen_and_commit_time(commit)?;
 
                 self.topo_queue.push(time, *id);
             }
@@ -296,7 +295,7 @@ where
     }
 
     fn indegree_walk_step(&mut self) -> Result<(), Error> {
-        if let Some(((gen, time), id)) = self.indegree_queue.pop() {
+        if let Some(((gen, _), id)) = self.indegree_queue.pop() {
             self.explore_to_depth(gen)?;
 
             let parents = self.collect_parents(&id)?;
@@ -517,7 +516,7 @@ where
 {
     let mut parents = SmallVec::<[(ObjectId, GenAndCommitTime); 1]>::new();
 
-    match find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)? {
+    match find(cache, &f, id, buf).map_err(|_err| Error::CommitNotFound)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 use gix_object::commit::ref_iter::Token as T;
@@ -536,7 +535,7 @@ where
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
             for (id, gen_time) in parents.iter_mut() {
-                let commit = find(cache, &f, id, buf).map_err(|err| Error::CommitNotFound)?;
+                let commit = find(cache, &f, id, buf).map_err(|_err| Error::CommitNotFound)?;
                 *gen_time = get_gen_and_commit_time(commit)?;
             }
         }
@@ -562,9 +561,7 @@ where
     Ok(parents)
 }
 
-fn get_gen_and_commit_time<'cache, 'buf>(
-    c: Either<'buf, 'cache>,
-) -> Result<GenAndCommitTime, Error> {
+fn get_gen_and_commit_time(c: Either) -> Result<GenAndCommitTime, Error> {
     match c {
         Either::CommitRefIter(c) => {
             let mut commit_time = 0;
@@ -590,6 +587,7 @@ fn get_gen_and_commit_time<'cache, 'buf>(
 
 #[cfg(test)]
 mod tests {
+    use gix_odb::FindExt;
     use std::str::FromStr;
     use test_case::test_matrix;
 
