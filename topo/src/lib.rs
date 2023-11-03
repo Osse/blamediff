@@ -890,4 +890,5 @@ mod tests {
     topo_test!(t19_18_51c8d7c_b282e76, "51c8d7c..b282e76");
 
     topo_chosen_test!(t20, "b282e76", "^616867d", "^bb48275");
+    topo_chosen_test!(t21, "d87231e", "00491e2", "^3be8265", "^bb48275");
 }
