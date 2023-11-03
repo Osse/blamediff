@@ -1,4 +1,3 @@
-use gix_commitgraph::Graph;
 use gix_hash::{oid, ObjectId};
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
@@ -6,7 +5,9 @@ use flagset::{flags, FlagSet};
 
 use smallvec::SmallVec;
 
+#[cfg(feature = "trace")]
 use ::trace::trace;
+#[cfg(feature = "trace")]
 trace::init_depth_var!();
 
 flags! {
@@ -45,8 +46,6 @@ pub enum Error {
     CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
     #[error("Error decoding stuff: {0}")]
     ObjectDecode(#[from] gix_object::decode::Error),
-    #[error("Error ancestring stuff: {0}")]
-    Ancestor(#[from] gix_traverse::commit::ancestors::Error),
 }
 
 /// Sorting to use for the topological walk
@@ -78,7 +77,10 @@ enum Queue {
     Topo(Vec<ObjectId>),
 }
 
-// #[trace(disable(new), prefix_enter = "", prefix_exit = "")]
+#[cfg_attr(
+    feature = "trace",
+    trace(disable(new), prefix_enter = "", prefix_exit = "")
+)]
 impl Queue {
     fn new(s: Sorting) -> Self {
         match s {
@@ -120,7 +122,7 @@ where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    commit_graph: Graph,
+    commit_graph: gix_commitgraph::Graph,
     find: Find,
     indegrees: IdMap<i32>,
     states: IdMap<WalkState>,
@@ -132,11 +134,14 @@ where
     buf: Vec<u8>,
 }
 
-// #[trace(
-//     disable(new, from_iters, from_specs),
-//     prefix_enter = "",
-//     prefix_exit = ""
-// )]
+#[cfg_attr(
+    feature = "trace",
+    trace(
+        disable(new, from_iters, from_specs),
+        prefix_enter = "",
+        prefix_exit = ""
+    )
+)]
 impl<Find, E> Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -451,7 +456,7 @@ where
     }
 }
 
-#[trace(prefix_enter = "", prefix_exit = "")]
+#[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
 impl<Find, E> Iterator for Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -587,7 +592,7 @@ fn get_gen_and_commit_time(c: Either) -> Result<GenAndCommitTime, Error> {
 
 #[cfg(test)]
 mod tests {
-    use gix_odb::FindExt;
+    use gix::prelude::FindExt;
     use std::str::FromStr;
     use test_case::test_matrix;
 

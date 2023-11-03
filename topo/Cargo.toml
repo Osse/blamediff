@@ -8,13 +8,11 @@ description = "A topological walk for gitoxide"
 
 [dependencies]
 gix-commitgraph = "*"
-gix-revwalk = "*"
-gix-revision = "*"
 gix-hash = "*"
-gix-hashtable = "*"
 gix-object = "*"
-gix-odb = "*"
-gix-traverse = "*"
+gix-revision = "*"
+gix-revwalk = "*"
+
 flagset = "0.4.4"
 smallvec = "1.11.1"
 thiserror = "1.0.49"
@@ -28,3 +26,5 @@ test-case = "3.2.1"
 [features]
 ## Run _all_ tests instead of a few chosen ones
 alltests = []
+## Apply tracing from the trace crate
+trace = []
