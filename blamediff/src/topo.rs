@@ -577,6 +577,7 @@ fn get_gen_and_commit_time<'cache, 'buf>(
                 match token {
                     Ok(T::Tree { .. }) => continue,
                     Ok(T::Parent { .. }) => continue,
+                    Ok(T::Author { .. }) => continue,
                     Ok(T::Committer { signature }) => {
                         commit_time = signature.time.seconds;
                         break;
