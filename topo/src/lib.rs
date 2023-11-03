@@ -5,6 +5,9 @@ use flagset::{flags, FlagSet};
 
 use smallvec::SmallVec;
 
+mod error;
+pub use error::*;
+
 #[cfg(feature = "trace")]
 use ::trace::trace;
 #[cfg(feature = "trace")]
@@ -23,29 +26,13 @@ flags! {
         Uninteresting,
         /// Commit marks the end of a walk, like foo in `git rev-list foo..bar`
         Bottom,
-        /// TODO:
+        /// TODO: Figure out purpose of this flag
         Added,
-        /// TODO:
+        /// TODO: Figure out purpose of this flag
         SymmetricLeft,
-        /// TODO:
+        /// TODO: Figure out purpose of this flag
         AncestryPath,
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("Calculated indegree missing")]
-    MissingIndegree,
-    #[error("Internal state not found")]
-    MissingState,
-    #[error("Commit not found in commit graph or storage")]
-    CommitNotFound,
-    #[error("Error initializing graph: {0}")]
-    CommitGraphInit(#[from] gix_commitgraph::init::Error),
-    #[error("Error doing file stuff: {0}")]
-    CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
-    #[error("Error decoding stuff: {0}")]
-    ObjectDecode(#[from] gix_object::decode::Error),
 }
 
 /// Sorting to use for the topological walk
@@ -112,8 +99,6 @@ impl Queue {
 
 type GenAndCommitTime = (u32, i64);
 
-type WalkState = FlagSet<WalkFlags>;
-
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
 /// necessarily up to date.
@@ -125,7 +110,7 @@ where
     commit_graph: gix_commitgraph::Graph,
     find: Find,
     indegrees: IdMap<i32>,
-    states: IdMap<WalkState>,
+    states: IdMap<FlagSet<WalkFlags>>,
     explore_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
     indegree_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
     topo_queue: Queue,
@@ -134,14 +119,6 @@ where
     buf: Vec<u8>,
 }
 
-#[cfg_attr(
-    feature = "trace",
-    trace(
-        disable(new, from_iters, from_specs),
-        prefix_enter = "",
-        prefix_exit = ""
-    )
-)]
 impl<Find, E> Walk<Find, E>
 where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
@@ -225,7 +202,14 @@ where
 
         Self::new(commit_graph, f, sorting, parents, &tips, &ends)
     }
+}
 
+#[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
+impl<Find, E> Walk<Find, E>
+where
+    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
     fn init(&mut self, tips: &[ObjectId], ends: &[ObjectId]) -> Result<(), Error> {
         let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
         let end_flags = tip_flags | WalkFlags::Uninteresting | WalkFlags::Bottom;
