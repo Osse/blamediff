@@ -30,3 +30,4 @@ smallvec = "1.11.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
+test-case = "3.2.1"

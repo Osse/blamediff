@@ -595,19 +595,10 @@ fn get_gen_and_commit_time<'cache, 'buf>(
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use test_case::test_matrix;
 
     use super::*;
     use pretty_assertions::assert_eq;
-
-    const SORTINGS: [(&str, Sorting); 2] = [
-        ("--date-order", Sorting::DateOrder),
-        ("--topo-order", Sorting::TopoOrder),
-    ];
-
-    const PARENTS: [(&str, Parents); 2] = [
-        ("--invert-grep", Parents::All), // Dummy flag
-        ("--first-parent", Parents::First),
-    ];
 
     fn git_rev_list(flags: &[&str], args: &[&str]) -> Vec<gix::ObjectId> {
         let output = std::process::Command::new("git")
@@ -626,30 +617,32 @@ mod tests {
             .expect("rev-list returns valid object ids")
     }
 
+    // "--invert-grep" is used as a dummy placeholder flag since we need a flag,
+    // but one that doesn't have an effect.  "--no-first-parents" does not exist
+    // :(
     macro_rules! topo_test {
         ($test_name:ident, $($spec:literal),+) => {
-            #[test]
-            fn $test_name() {
+            #[test_matrix(
+                [ ("--date-order", Sorting::DateOrder), ("--topo-order", Sorting::TopoOrder) ],
+                [ ("--invert-grep", Parents::All), ("--first-parent", Parents::First) ]
+            )]
+            fn $test_name((sort_flag, sorting): (&str, Sorting), (parent_flag, parents): (&str, Parents)) {
                 let repo = gix::discover(".").unwrap();
                 let specs = [ $(repo.rev_parse($spec).expect("valid spec").detach()),+ ];
 
-                for (flag1, sorting) in SORTINGS {
-                    for (flag2, parents) in PARENTS {
-                        let walk = Walk::from_specs(
-                            repo.commit_graph().unwrap(),
-                            |id, buf| repo.objects.find_commit_iter(id, buf),
-                            sorting,
-                            parents,
-                            specs.into_iter()
-                        )
-                        .unwrap();
+                let walk = Walk::from_specs(
+                    repo.commit_graph().unwrap(),
+                    |id, buf| repo.objects.find_commit_iter(id, buf),
+                    sorting,
+                    parents,
+                    specs.iter().cloned()
+                )
+                .unwrap();
 
-                        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
-                        let git_ids = git_rev_list(&[flag1, flag2], &[$($spec),+]);
+                let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
+                let git_ids = git_rev_list(&[sort_flag, parent_flag], &[$($spec),+]);
 
-                        assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {flag1} {flag2}");
-                    }
-                }
+                assert_eq!(ids, git_ids, "left = ids, right = git_ids, flags = {sort_flag} {parent_flag}");
             }
         };
     }
