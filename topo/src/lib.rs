@@ -107,7 +107,7 @@ where
     Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
     E: std::error::Error + Send + Sync + 'static,
 {
-    commit_graph: gix_commitgraph::Graph,
+    commit_graph: Option<gix_commitgraph::Graph>,
     find: Find,
     indegrees: IdMap<i32>,
     states: IdMap<FlagSet<WalkFlags>>,
@@ -128,7 +128,7 @@ where
     /// tips and ending at the bottoms. Like `git rev-list --topo-order
     /// ^bottom... tips...`
     pub fn new(
-        commit_graph: gix_commitgraph::Graph,
+        commit_graph: Option<gix_commitgraph::Graph>,
         f: Find,
         sorting: Sorting,
         parents: Parents,
@@ -157,7 +157,7 @@ where
     /// tips and ending at the ends. Like `git rev-list --topo-order
     /// ^ends... tips...`
     pub fn from_iters(
-        commit_graph: gix_commitgraph::Graph,
+        commit_graph: Option<gix_commitgraph::Graph>,
         f: Find,
         sorting: Sorting,
         parents: Parents,
@@ -176,7 +176,7 @@ where
     /// tips and ending at the ends, given by the `[gix_revision::Spec]Specs`
     /// ^ends... tips...`
     pub fn from_specs(
-        commit_graph: gix_commitgraph::Graph,
+        commit_graph: Option<gix_commitgraph::Graph>,
         f: Find,
         sorting: Sorting,
         parents: Parents,
@@ -221,7 +221,7 @@ where
         {
             *self.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(Some(&self.commit_graph), &self.find, id, &mut self.buf)
+            let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)
                 .map_err(|_err| Error::CommitNotFound)?;
 
             let (gen, time) = get_gen_and_commit_time(commit)?;
@@ -257,7 +257,7 @@ where
             // NOTE: in Git the ends are also added to the topo_queue, but then
             // in simplify_commit() Git is told to ignore it. For now the tests pass.
             if i == 1 {
-                let commit = find(Some(&self.commit_graph), &self.find, id, &mut self.buf)
+                let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)
                     .map_err(|_err| Error::CommitNotFound)?;
 
                 let (_, time) = get_gen_and_commit_time(commit)?;
@@ -417,7 +417,7 @@ where
         id: &oid,
     ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error> {
         collect_parents(
-            Some(&self.commit_graph),
+            self.commit_graph.as_ref(),
             &self.find,
             id,
             matches!(self.parents, Parents::First),
@@ -431,7 +431,7 @@ where
         id: &oid,
     ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error> {
         collect_parents(
-            Some(&self.commit_graph),
+            self.commit_graph.as_ref(),
             &self.find,
             id,
             false,
@@ -587,8 +587,24 @@ mod tests {
     use Parents::{All, First};
     use Sorting::{DateOrder, TopoOrder};
 
-    fn git_rev_list(sorting: Sorting, parents: Parents, specs: &[&str]) -> Vec<ObjectId> {
-        let flags: &[&str] = match (parents, sorting) {
+    enum GraphSetting {
+        UseGraph,
+        NoGraph,
+    }
+    use GraphSetting::{NoGraph, UseGraph};
+
+    fn git_rev_list(
+        graph_setting: GraphSetting,
+        sorting: Sorting,
+        parents: Parents,
+        specs: &[&str],
+    ) -> Vec<ObjectId> {
+        let git_flags = match graph_setting {
+            UseGraph => &["-c", "core.commitGraph=true"],
+            NoGraph => &["-c", "core.commitGraph=false"],
+        };
+
+        let rev_list_flags: &[&str] = match (parents, sorting) {
             (All, DateOrder) => &["--date-order"],
             (All, TopoOrder) => &["--topo-order"],
             (First, DateOrder) => &["--first-parent", "--date-order"],
@@ -596,8 +612,9 @@ mod tests {
         };
 
         let output = std::process::Command::new("git")
+            .args(git_flags)
             .arg("rev-list")
-            .args(flags)
+            .args(rev_list_flags)
             .args(specs)
             .output()
             .expect("able to run git rev-list")
@@ -611,7 +628,12 @@ mod tests {
             .expect("rev-list returns valid object ids")
     }
 
-    fn test_body(sorting: Sorting, parents: Parents, raw_specs: &[&str]) {
+    fn test_body(
+        graph_setting: GraphSetting,
+        sorting: Sorting,
+        parents: Parents,
+        raw_specs: &[&str],
+    ) {
         let repo = gix::discover(".").unwrap();
         let specs = raw_specs
             .iter()
@@ -619,7 +641,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         let walk = Walk::from_specs(
-            repo.commit_graph().unwrap(),
+            match graph_setting {
+                UseGraph => repo.commit_graph().ok(),
+                NoGraph => None,
+            },
             |id, buf| repo.objects.find_commit_iter(id, buf),
             sorting,
             parents,
@@ -628,7 +653,7 @@ mod tests {
         .unwrap();
 
         let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
-        let git_ids = git_rev_list(sorting, parents, raw_specs);
+        let git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
 
         assert_eq!(
             ids, git_ids,
@@ -639,11 +664,12 @@ mod tests {
     macro_rules! topo_test {
         ($test_name:ident, $($spec:literal),+) => {
             #[test_matrix(
+                [ UseGraph, NoGraph ],
                 [ DateOrder, TopoOrder ],
                 [ All, First ]
             )]
-            fn $test_name(sorting: Sorting, parents: Parents) {
-                test_body(sorting, parents, &[$($spec),+]);
+            fn $test_name(graph_setting: GraphSetting, sorting: Sorting, parents: Parents) {
+                test_body(graph_setting, sorting, parents, &[$($spec),+]);
             }
         };
     }
