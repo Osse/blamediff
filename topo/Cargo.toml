@@ -7,11 +7,11 @@ description = "A topological walk for gitoxide"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gix-commitgraph = "*"
-gix-hash = "*"
-gix-object = "*"
-gix-revision = "*"
-gix-revwalk = "*"
+gix-commitgraph = { path = "../../gitoxide/gix-commitgraph" }
+gix-hash = { path = "../../gitoxide/gix-hash" }
+gix-object = { path = "../../gitoxide/gix-object" }
+gix-revision = { path = "../../gitoxide/gix-revision" }
+gix-revwalk = { path = "../../gitoxide/gix-revwalk" }
 
 flagset = "0.4.4"
 smallvec = "1.11.1"
@@ -19,7 +19,7 @@ thiserror = "1.0.49"
 trace = "0.1"
 
 [dev-dependencies]
-gix = "0.54"
+gix = { path = "../../gitoxide/gix" }
 pretty_assertions = "1.4"
 test-case = "3.2.1"
 

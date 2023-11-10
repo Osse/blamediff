@@ -1,4 +1,5 @@
 use gix_hash::{oid, ObjectId};
+use gix_object::FindExt;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
 use flagset::{flags, FlagSet};
@@ -102,10 +103,9 @@ type GenAndCommitTime = (u32, i64);
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order`. It requires a commit graph to be available, but not
 /// necessarily up to date.
-pub struct Walk<Find, E>
+pub struct Walk<Find>
 where
-    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     commit_graph: Option<gix_commitgraph::Graph>,
     find: Find,
@@ -119,10 +119,9 @@ where
     buf: Vec<u8>,
 }
 
-impl<Find, E> Walk<Find, E>
+impl<Find> Walk<Find>
 where
-    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     /// Create a new Walk that walks the given repository, starting at the
     /// tips and ending at the bottoms. Like `git rev-list --topo-order
@@ -205,10 +204,9 @@ where
 }
 
 #[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
-impl<Find, E> Walk<Find, E>
+impl<Find> Walk<Find>
 where
-    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     fn init(&mut self, tips: &[ObjectId], ends: &[ObjectId]) -> Result<(), Error> {
         let tip_flags: FlagSet<WalkFlags> = WalkFlags::Seen.into();
@@ -221,8 +219,7 @@ where
         {
             *self.indegrees.entry(*id).or_default() = 1;
 
-            let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)
-                .map_err(|_err| Error::CommitNotFound)?;
+            let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)?;
 
             let (gen, time) = get_gen_and_commit_time(commit)?;
 
@@ -257,8 +254,7 @@ where
             // NOTE: in Git the ends are also added to the topo_queue, but then
             // in simplify_commit() Git is told to ignore it. For now the tests pass.
             if i == 1 {
-                let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)
-                    .map_err(|_err| Error::CommitNotFound)?;
+                let commit = find(self.commit_graph.as_ref(), &self.find, id, &mut self.buf)?;
 
                 let (_, time) = get_gen_and_commit_time(commit)?;
 
@@ -441,10 +437,9 @@ where
 }
 
 #[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
-impl<Find, E> Iterator for Walk<Find, E>
+impl<Find> Iterator for Walk<Find>
 where
-    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     type Item = Result<ObjectId, Error>;
 
@@ -476,23 +471,22 @@ enum Either<'buf, 'cache> {
     CachedCommit(gix_commitgraph::file::Commit<'cache>),
 }
 
-fn find<'cache, 'buf, Find, E>(
+fn find<'cache, 'buf, Find>(
     cache: Option<&'cache gix_commitgraph::Graph>,
     find: Find,
     id: &oid,
     buf: &'buf mut Vec<u8>,
-) -> Result<Either<'buf, 'cache>, E>
+) -> Result<Either<'buf, 'cache>, gix_object::find::existing_iter::Error>
 where
-    Find: for<'a> Fn(&gix_hash::oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     match cache.and_then(|cache| cache.commit_by_id(id).map(Either::CachedCommit)) {
         Some(c) => Ok(c),
-        None => (find)(id, buf).map(Either::CommitRefIter),
+        None => find.find_commit_iter(id, buf).map(Either::CommitRefIter),
     }
 }
 
-fn collect_parents<'b, Find, E>(
+fn collect_parents<'b, Find>(
     cache: Option<&gix_commitgraph::Graph>,
     f: Find,
     id: &oid,
@@ -500,12 +494,11 @@ fn collect_parents<'b, Find, E>(
     buf: &'b mut Vec<u8>,
 ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>, Error>
 where
-    Find: for<'a> Fn(&oid, &'a mut Vec<u8>) -> Result<gix_object::CommitRefIter<'a>, E>,
-    E: std::error::Error + Send + Sync + 'static,
+    Find: gix_object::Find,
 {
     let mut parents = SmallVec::<[(ObjectId, GenAndCommitTime); 1]>::new();
 
-    match find(cache, &f, id, buf).map_err(|_err| Error::CommitNotFound)? {
+    match find(cache, &f, id, buf)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 use gix_object::commit::ref_iter::Token as T;
@@ -524,7 +517,7 @@ where
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
             for (id, gen_time) in parents.iter_mut() {
-                let commit = find(cache, &f, id, buf).map_err(|_err| Error::CommitNotFound)?;
+                let commit = find(cache, &f, id, buf)?;
                 *gen_time = get_gen_and_commit_time(commit)?;
             }
         }
@@ -645,7 +638,7 @@ mod tests {
                 UseGraph => Some(repo.commit_graph().expect("commit graph available")),
                 NoGraph => None,
             },
-            |id, buf| repo.objects.find_commit_iter(id, buf),
+            &repo.objects,
             sorting,
             parents,
             specs.iter().cloned(),
