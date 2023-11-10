@@ -642,7 +642,7 @@ mod tests {
 
         let walk = Walk::from_specs(
             match graph_setting {
-                UseGraph => repo.commit_graph().ok(),
+                UseGraph => Some(repo.commit_graph().expect("commit graph available")),
                 NoGraph => None,
             },
             |id, buf| repo.objects.find_commit_iter(id, buf),
