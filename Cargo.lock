@@ -1650,11 +1650,13 @@ checksum = "96b6d623a1152c3facb79067d6e2ecdae48130030cf27d6eb21109f13bd7b836"
 name = "gix-traverse"
 version = "0.34.0"
 dependencies = [
+ "flagset",
  "gix-commitgraph 0.22.0",
  "gix-date 0.8.0",
  "gix-hash 0.13.1",
  "gix-hashtable 0.4.0",
  "gix-object 0.38.0",
+ "gix-revision 0.23.0",
  "gix-revwalk 0.9.0",
  "smallvec",
  "thiserror",

@@ -1,4 +1,5 @@
 use gix_hash::{oid, ObjectId};
+#[cfg(feature = "standalone")]
 use gix_object::FindExt;
 use gix_revwalk::{graph::IdMap, PriorityQueue};
 
@@ -6,8 +7,24 @@ use flagset::{flags, FlagSet};
 
 use smallvec::SmallVec;
 
-mod error;
-pub use error::*;
+use thiserror;
+
+#[derive(thiserror::Error, Debug)]
+#[allow(missing_docs)]
+pub enum Error {
+    #[error("Calculated indegree missing")]
+    MissingIndegree,
+    #[error("Internal state not found")]
+    MissingState,
+    #[error("Error initializing graph: {0}")]
+    CommitGraphInit(#[from] gix_commitgraph::init::Error),
+    #[error("Error doing file stuff: {0}")]
+    CommitGraphFile(#[from] gix_commitgraph::file::commit::Error),
+    #[error("Error decoding stuff: {0}")]
+    ObjectDecode(#[from] gix_object::decode::Error),
+    #[error("Error finding object: {0}")]
+    Find(#[from] gix_object::find::existing_iter::Error),
+}
 
 #[cfg(feature = "trace")]
 use ::trace::trace;
@@ -466,11 +483,15 @@ where
     }
 }
 
+#[cfg(feature = "standalone")]
 enum Either<'buf, 'cache> {
     CommitRefIter(gix_object::CommitRefIter<'buf>),
     CachedCommit(gix_commitgraph::file::Commit<'cache>),
 }
+#[cfg(not(feature = "standalone"))]
+use crate::Either;
 
+#[cfg(feature = "standalone")]
 fn find<'cache, 'buf, Find>(
     cache: Option<&'cache gix_commitgraph::Graph>,
     find: Find,
@@ -485,6 +506,8 @@ where
         None => find.find_commit_iter(id, buf).map(Either::CommitRefIter),
     }
 }
+#[cfg(not(feature = "standalone"))]
+use crate::find;
 
 fn collect_parents<'b, Find>(
     cache: Option<&gix_commitgraph::Graph>,
@@ -543,7 +566,7 @@ where
     Ok(parents)
 }
 
-fn get_gen_and_commit_time(c: Either) -> Result<GenAndCommitTime, Error> {
+fn get_gen_and_commit_time(c: Either<'_, '_>) -> Result<GenAndCommitTime, Error> {
     match c {
         Either::CommitRefIter(c) => {
             let mut commit_time = 0;

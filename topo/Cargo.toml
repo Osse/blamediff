@@ -24,7 +24,11 @@ pretty_assertions = "1.4"
 test-case = "3.2.1"
 
 [features]
+default = ["standalone"]
+
 ## Run _all_ tests instead of a few chosen ones
 alltests = []
+## Compile as separate crate
+standalone = []
 ## Apply tracing from the trace crate
 trace = []
