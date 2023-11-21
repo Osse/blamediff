@@ -117,9 +117,109 @@ impl Queue {
 
 type GenAndCommitTime = (u32, i64);
 
+/// Builder for `Walk`
+#[derive(Default)]
+pub struct Builder<Find>
+where
+    Find: gix_object::Find,
+{
+    commit_graph: Option<gix_commitgraph::Graph>,
+    find: Find,
+    sorting: Sorting,
+    parents: Parents,
+    tips: Vec<ObjectId>,
+    ends: Vec<ObjectId>,
+}
+
+impl<Find> Builder<Find>
+where
+    Find: gix_object::Find,
+{
+    /// Create a new Builder from an iterator of tips to start walking from, and
+    /// optionally an iterator of tips to end at.
+    pub fn from_iters(
+        find: Find,
+        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
+        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
+    ) -> Self {
+        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
+        let ends = ends
+            .map(|e| e.into_iter().map(Into::into).collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        Self {
+            commit_graph: Default::default(),
+            find,
+            sorting: Default::default(),
+            parents: Default::default(),
+            tips,
+            ends,
+        }
+    }
+
+    /// Create a new Builder from an iterator of `Specs` to describe the desired walk.
+    pub fn from_specs(find: Find, specs: impl IntoIterator<Item = gix_revision::Spec>) -> Self {
+        let mut tips = vec![];
+        let mut ends = vec![];
+
+        for spec in specs {
+            use gix_revision::Spec as S;
+            match spec {
+                S::Include(i) => tips.push(i),
+                S::Exclude(e) => ends.push(e),
+                S::Range { from, to } => {
+                    tips.push(to);
+                    ends.push(from)
+                }
+                S::Merge { .. } => todo!(),
+                S::IncludeOnlyParents(_) => todo!(),
+                S::ExcludeParents(_) => todo!(),
+            }
+        }
+
+        Self {
+            commit_graph: Default::default(),
+            find,
+            sorting: Default::default(),
+            parents: Default::default(),
+            tips,
+            ends,
+        }
+    }
+
+    /// Set the [`Sorting`] to use for the topological walk
+    pub fn sorting(mut self, sorting: Sorting) -> Self {
+        self.sorting = sorting;
+        self
+    }
+
+    /// Specify how to handle commit parents during traversal.
+    pub fn parents(mut self, parents: Parents) -> Self {
+        self.parents = parents;
+        self
+    }
+
+    /// Set or unset the commit-graph to use for the iteration.
+    pub fn with_commit_graph(mut self, commit_graph: Option<gix_commitgraph::Graph>) -> Self {
+        self.commit_graph = commit_graph;
+        self
+    }
+
+    /// Build a new [`Walk`] instance.
+    pub fn build(self) -> Result<Walk<Find>, Error> {
+        Walk::new(
+            self.commit_graph,
+            self.find,
+            self.sorting,
+            self.parents,
+            &self.tips,
+            &self.ends,
+        )
+    }
+}
+
 /// A commit walker that walks in topographical order, like `git rev-list
-/// --topo-order`. It requires a commit graph to be available, but not
-/// necessarily up to date.
+/// --topo-order` or `--date-order` depending on the chosen [`Sorting`]
 pub struct Walk<Find>
 where
     Find: gix_object::Find,
@@ -664,20 +764,18 @@ mod tests {
         let store = gix_odb::at("../.git/objects").expect("find objects");
         let specs = raw_specs.iter().map(|s| my_parse(*s)).collect::<Vec<_>>();
 
-        let walk = Walk::from_specs(
-            match graph_setting {
+        let walk = Builder::from_specs(&store, specs)
+            .with_commit_graph(match graph_setting {
                 UseGraph => Some(
                     gix_commitgraph::at(store.store_ref().path().join("info"))
                         .expect("commit graph available"),
                 ),
                 NoGraph => None,
-            },
-            &store,
-            sorting,
-            parents,
-            specs,
-        )
-        .unwrap();
+            })
+            .sorting(sorting)
+            .parents(parents)
+            .build()
+            .unwrap();
 
         let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
         let git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
