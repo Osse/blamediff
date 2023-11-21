@@ -19,7 +19,7 @@ thiserror = "1.0.49"
 trace = "0.1"
 
 [dev-dependencies]
-gix = { path = "../../gitoxide/gix" }
+gix-odb = { path = "../../gitoxide/gix-odb" }
 pretty_assertions = "1.4"
 test-case = "3.2.1"
 

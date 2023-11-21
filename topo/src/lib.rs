@@ -592,7 +592,7 @@ fn get_gen_and_commit_time(c: Either<'_, '_>) -> Result<GenAndCommitTime, Error>
 
 #[cfg(test)]
 mod tests {
-    use gix::prelude::FindExt;
+    // use gix::prelude::FindExt;
     use std::str::FromStr;
     use test_case::test_matrix;
 
@@ -608,6 +608,17 @@ mod tests {
         NoGraph,
     }
     use GraphSetting::{NoGraph, UseGraph};
+
+    fn my_parse(r: &str) -> gix_revision::Spec {
+        match r.strip_prefix("^") {
+            Some(e) => {
+                gix_revision::Spec::Exclude(ObjectId::from_str(e).expect("valid SHA1 in tests"))
+            }
+            None => {
+                gix_revision::Spec::Include(ObjectId::from_str(r).expect("valid SHA1 in tests"))
+            }
+        }
+    }
 
     fn git_rev_list(
         graph_setting: GraphSetting,
@@ -650,21 +661,21 @@ mod tests {
         parents: Parents,
         raw_specs: &[&str],
     ) {
-        let repo = gix::discover(".").unwrap();
-        let specs = raw_specs
-            .iter()
-            .map(|s| repo.rev_parse(*s).expect("valid spec").detach())
-            .collect::<Vec<_>>();
+        let store = gix_odb::at("../.git/objects").expect("find objects");
+        let specs = raw_specs.iter().map(|s| my_parse(*s)).collect::<Vec<_>>();
 
         let walk = Walk::from_specs(
             match graph_setting {
-                UseGraph => Some(repo.commit_graph().expect("commit graph available")),
+                UseGraph => Some(
+                    gix_commitgraph::at(store.store_ref().path().join("info"))
+                        .expect("commit graph available"),
+                ),
                 NoGraph => None,
             },
-            &repo.objects,
+            &store,
             sorting,
             parents,
-            specs.iter().cloned(),
+            specs,
         )
         .unwrap();
 
@@ -693,13 +704,17 @@ mod tests {
     #[cfg(feature = "alltests")]
     include!("generated_tests.rs");
 
-    topo_test!(basic, "fourth-test");
-    topo_test!(one_end, "fourth-test", "^3be8265");
+    topo_test!(basic, "b282e76b1322e1d26ef002968e1591bd8f22df96");
+    topo_test!(
+        one_end,
+        "b282e76b1322e1d26ef002968e1591bd8f22df96",
+        "^3be8265bc3f7d982170bd475be3b82cb140643b9"
+    );
     topo_test!(
         two_tips_two_ends,
-        "d87231e",
-        "00491e2",
-        "^3be8265",
-        "^bb48275"
+        "d87231e63272c03850847902b86f0358e161210c",
+        "00491e237a24c20f81e3e7f7a37d6359f65617d0",
+        "^3be8265bc3f7d982170bd475be3b82cb140643b9",
+        "^bb482759d46e81f0f51d7845d86d2dae93b8b3da"
     );
 }
