@@ -7,8 +7,6 @@ use flagset::{flags, FlagSet};
 
 use smallvec::SmallVec;
 
-use thiserror;
-
 #[derive(thiserror::Error, Debug)]
 #[allow(missing_docs)]
 pub enum Error {
@@ -54,10 +52,11 @@ flags! {
 }
 
 /// Sorting to use for the topological walk
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum Sorting {
     /// Show no parents before all of its children are shown, but otherwise show
     /// commits in the commit timestamp order.
+    #[default]
     DateOrder,
 
     /// Show no parents before all of its children are shown, and avoid
@@ -66,9 +65,10 @@ pub enum Sorting {
 }
 
 /// Specify how to handle commit parents during traversal.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum Parents {
     /// Traverse all parents, useful for traversing the entire ancestry.
+    #[default]
     All,
 
     ///Only traverse along the first parent, which commonly ignores all branches.
