@@ -709,14 +709,17 @@ mod tests {
     }
     use GraphSetting::{NoGraph, UseGraph};
 
-    fn my_parse(r: &str) -> gix_revision::Spec {
-        match r.strip_prefix("^") {
-            Some(e) => {
-                gix_revision::Spec::Exclude(ObjectId::from_str(e).expect("valid SHA1 in tests"))
+    // To avoid not depending on the gix crate itself
+    fn simple_parse(r: &str) -> gix_revision::Spec {
+        if let Some((from, to)) = r.split_once("..") {
+            gix_revision::Spec::Range {
+                from: ObjectId::from_str(from).expect("Valid SHA1 in tests"),
+                to: ObjectId::from_str(to).expect("Valid SHA1 in tests"),
             }
-            None => {
-                gix_revision::Spec::Include(ObjectId::from_str(r).expect("valid SHA1 in tests"))
-            }
+        } else if let Some(e) = r.strip_prefix("^") {
+            gix_revision::Spec::Exclude(ObjectId::from_str(e).expect("Valid SHA1 in tests"))
+        } else {
+            gix_revision::Spec::Include(ObjectId::from_str(r).expect("Valid SHA1 in tests"))
         }
     }
 
@@ -762,16 +765,23 @@ mod tests {
         raw_specs: &[&str],
     ) {
         let store = gix_odb::at("../.git/objects").expect("find objects");
-        let specs = raw_specs.iter().map(|s| my_parse(*s)).collect::<Vec<_>>();
+        let specs = raw_specs
+            .iter()
+            .map(|s| simple_parse(*s))
+            .collect::<Vec<_>>();
+
+        let commit_graph = match graph_setting {
+            UseGraph => Some(
+                gix_commitgraph::at(store.store_ref().path().join("info"))
+                    .expect("commit graph available"),
+                // The Walk takes an Option, but if the commit graph isn't
+                // available I want to know immediately, hence the Some(...expect())
+            ),
+            NoGraph => None,
+        };
 
         let walk = Builder::from_specs(&store, specs)
-            .with_commit_graph(match graph_setting {
-                UseGraph => Some(
-                    gix_commitgraph::at(store.store_ref().path().join("info"))
-                        .expect("commit graph available"),
-                ),
-                NoGraph => None,
-            })
+            .with_commit_graph(commit_graph)
             .sorting(sorting)
             .parents(parents)
             .build()
@@ -807,6 +817,12 @@ mod tests {
         one_end,
         "b282e76b1322e1d26ef002968e1591bd8f22df96",
         "^3be8265bc3f7d982170bd475be3b82cb140643b9"
+    );
+
+    topo_test!(
+        empty_range,
+        "3be8265bc3f7d982170bd475be3b82cb140643b9",
+        "^b282e76b1322e1d26ef002968e1591bd8f22df96"
     );
     topo_test!(
         two_tips_two_ends,
