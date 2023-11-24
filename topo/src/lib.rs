@@ -691,8 +691,8 @@ fn get_gen_and_commit_time(c: Either<'_, '_>) -> Result<GenAndCommitTime, Error>
 }
 
 #[cfg(test)]
+#[cfg(feature = "standalone")]
 mod tests {
-    // use gix::prelude::FindExt;
     use std::str::FromStr;
     use test_case::test_matrix;
 
