@@ -67,26 +67,10 @@ impl Blame {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-enum Origin {
-    Definitely(ObjectId),
-    AncestorOf(ObjectId),
-}
-
-impl Origin {
-    fn id(&self) -> ObjectId {
-        match self {
-            Self::Definitely(id) => *id,
-            Self::AncestorOf(id) => *id,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
 struct Line {
     boundary: bool,
     original_line_no: u32,
     id: ObjectId,
-    // origin: Origin,
 }
 
 #[derive(Debug)]
