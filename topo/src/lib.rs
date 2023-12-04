@@ -74,12 +74,20 @@ pub enum Parents {
     ///Only traverse along the first parent, which commonly ignores all branches.
     First,
 }
+/// Information about a commit that we obtained naturally as part of the iteration.
+#[derive(Debug, PartialEq)]
+pub struct Info {
+    /// The id of the commit.
+    pub id: ObjectId,
+    /// All parent ids we have encountered. Note that these will be at most one if [`Parents::First`] is enabled.
+    pub parent_ids: SmallVec<[ObjectId; 1]>,
+}
 
 // Git's priority queue works as a LIFO stack if no compare function is set,
 // which is the case for --topo-order
 enum Queue {
-    Date(PriorityQueue<i64, ObjectId>),
-    Topo(Vec<ObjectId>),
+    Date(PriorityQueue<i64, Info>),
+    Topo(Vec<Info>),
 }
 
 #[cfg_attr(
@@ -94,21 +102,21 @@ impl Queue {
         }
     }
 
-    fn push(&mut self, commit_time: i64, id: ObjectId) {
+    fn push(&mut self, commit_time: i64, id: Info) {
         match self {
             Self::Date(q) => q.insert(commit_time, id),
             Self::Topo(q) => q.push(id),
         }
     }
 
-    fn peek(&self) -> Option<&ObjectId> {
+    fn peek(&self) -> Option<&Info> {
         match self {
             Self::Date(q) => q.peek().map(|(_, id)| id),
             Self::Topo(q) => q.last(),
         }
     }
 
-    fn pop(&mut self) -> Option<ObjectId> {
+    fn pop(&mut self) -> Option<Info> {
         match self {
             Self::Date(q) => q.pop().map(|(_, id)| id),
             Self::Topo(q) => q.pop(),
@@ -125,25 +133,23 @@ impl Queue {
 type GenAndCommitTime = (u32, i64);
 
 /// Builder for `Walk`
-#[derive(Default)]
-pub struct Builder<Find>
-where
-    Find: gix_object::Find,
-{
+pub struct Builder<Find, Predicate> {
     commit_graph: Option<gix_commitgraph::Graph>,
     find: Find,
+    predicate: Predicate,
     sorting: Sorting,
     parents: Parents,
     tips: Vec<ObjectId>,
     ends: Vec<ObjectId>,
 }
 
-impl<Find> Builder<Find>
+impl<Find> Builder<Find, fn(&oid) -> bool>
 where
     Find: gix_object::Find,
 {
-    /// Create a new Builder from an iterator of tips to start walking from, and
-    /// optionally an iterator of tips to end at.
+    /// Create a new Builder for a Walk that walks the given repository, starting at the
+    /// tips and ending at the ends. Like `git rev-list --topo-order
+    /// ^ends... tips...`
     pub fn from_iters(
         find: Find,
         tips: impl IntoIterator<Item = impl Into<ObjectId>>,
@@ -161,10 +167,12 @@ where
             parents: Default::default(),
             tips,
             ends,
+            predicate: |_| true,
         }
     }
 
-    /// Create a new Builder from an iterator of `Specs` to describe the desired walk.
+    /// Create a new Builder for a Walk that walks the given repository from an
+    /// iterator of `Specs`, given by the `[gix_revision::Spec]Specs`
     pub fn from_specs(find: Find, specs: impl IntoIterator<Item = gix_revision::Spec>) -> Self {
         let mut tips = vec![];
         let mut ends = vec![];
@@ -191,9 +199,33 @@ where
             parents: Default::default(),
             tips,
             ends,
+            predicate: |_| true,
         }
     }
 
+    /// Set a predicate to filter out revisions from the walk. Can be used to
+    /// implement e.g. filtering on paths or time. This does *not* exclude the
+    /// parent(s) of a revision that is excluded.
+    pub fn with_predicate<Predicate>(self, predicate: Predicate) -> Builder<Find, Predicate>
+    where
+        Predicate: FnMut(&oid) -> bool,
+    {
+        Builder {
+            commit_graph: self.commit_graph,
+            find: self.find,
+            sorting: self.sorting,
+            parents: self.parents,
+            tips: self.tips,
+            ends: self.ends,
+            predicate,
+        }
+    }
+}
+impl<Find, Predicate> Builder<Find, Predicate>
+where
+    Find: gix_object::Find,
+    Predicate: FnMut(&oid) -> bool,
+{
     /// Set the [`Sorting`] to use for the topological walk
     pub fn sorting(mut self, sorting: Sorting) -> Self {
         self.sorting = sorting;
@@ -213,7 +245,7 @@ where
     }
 
     /// Build a new [`Walk`] instance.
-    pub fn build(self) -> Result<Walk<Find>, Error> {
+    pub fn build(self) -> Result<Walk<Find, Predicate>, Error> {
         Walk::new(
             self.commit_graph,
             self.find,
@@ -221,18 +253,17 @@ where
             self.parents,
             &self.tips,
             &self.ends,
+            self.predicate,
         )
     }
 }
 
 /// A commit walker that walks in topographical order, like `git rev-list
 /// --topo-order` or `--date-order` depending on the chosen [`Sorting`]
-pub struct Walk<Find>
-where
-    Find: gix_object::Find,
-{
+pub struct Walk<Find, Predicate> {
     commit_graph: Option<gix_commitgraph::Graph>,
     find: Find,
+    predicate: Predicate,
     indegrees: IdMap<i32>,
     states: IdMap<FlagSet<WalkFlags>>,
     explore_queue: PriorityQueue<GenAndCommitTime, ObjectId>,
@@ -243,24 +274,27 @@ where
     buf: Vec<u8>,
 }
 
-impl<Find> Walk<Find>
+impl<Find, Predicate> Walk<Find, Predicate>
 where
     Find: gix_object::Find,
+    Predicate: FnMut(&oid) -> bool,
 {
     /// Create a new Walk that walks the given repository, starting at the
     /// tips and ending at the bottoms. Like `git rev-list --topo-order
     /// ^bottom... tips...`
-    pub fn new(
+    fn new(
         commit_graph: Option<gix_commitgraph::Graph>,
         f: Find,
         sorting: Sorting,
         parents: Parents,
         tips: &[ObjectId],
         ends: &[ObjectId],
+        predicate: Predicate,
     ) -> Result<Self, Error> {
         let mut s = Self {
             commit_graph,
             find: f,
+            predicate,
             indegrees: IdMap::default(),
             states: IdMap::default(),
             explore_queue: PriorityQueue::new(),
@@ -275,60 +309,10 @@ where
 
         Ok(s)
     }
-
-    /// Create a new Walk that walks the given repository, starting at the
-    /// tips and ending at the ends. Like `git rev-list --topo-order
-    /// ^ends... tips...`
-    pub fn from_iters(
-        commit_graph: Option<gix_commitgraph::Graph>,
-        f: Find,
-        sorting: Sorting,
-        parents: Parents,
-        tips: impl IntoIterator<Item = impl Into<ObjectId>>,
-        ends: Option<impl IntoIterator<Item = impl Into<ObjectId>>>,
-    ) -> Result<Self, Error> {
-        let tips = tips.into_iter().map(Into::into).collect::<Vec<_>>();
-        let ends = ends
-            .map(|e| e.into_iter().map(Into::into).collect::<Vec<_>>())
-            .unwrap_or_default();
-
-        Self::new(commit_graph, f, sorting, parents, &tips, &ends)
-    }
-
-    /// Create a new Walk that walks the given repository, starting at the
-    /// tips and ending at the ends, given by the `[gix_revision::Spec]Specs`
-    /// ^ends... tips...`
-    pub fn from_specs(
-        commit_graph: Option<gix_commitgraph::Graph>,
-        f: Find,
-        sorting: Sorting,
-        parents: Parents,
-        specs: impl IntoIterator<Item = gix_revision::Spec>,
-    ) -> Result<Self, Error> {
-        let mut tips = vec![];
-        let mut ends = vec![];
-
-        for spec in specs {
-            use gix_revision::Spec as S;
-            match spec {
-                S::Include(i) => tips.push(i),
-                S::Exclude(e) => ends.push(e),
-                S::Range { from, to } => {
-                    tips.push(to);
-                    ends.push(from)
-                }
-                S::Merge { .. } => todo!(),
-                S::IncludeOnlyParents(_) => todo!(),
-                S::ExcludeParents(_) => todo!(),
-            }
-        }
-
-        Self::new(commit_graph, f, sorting, parents, &tips, &ends)
-    }
 }
 
 #[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
-impl<Find> Walk<Find>
+impl<Find, Predicate> Walk<Find, Predicate>
 where
     Find: gix_object::Find,
 {
@@ -382,7 +366,19 @@ where
 
                 let (_, time) = get_gen_and_commit_time(commit)?;
 
-                self.topo_queue.push(time, *id);
+                let parent_ids = self
+                    .collect_all_parents(id)?
+                    .into_iter()
+                    .map(|e| e.0)
+                    .collect();
+
+                self.topo_queue.push(
+                    time,
+                    Info {
+                        id: *id,
+                        parent_ids,
+                    },
+                );
             }
         }
 
@@ -480,7 +476,15 @@ where
             *i -= 1;
 
             if *i == 1 {
-                self.topo_queue.push(parent_commit_time, pid);
+                let parent_ids = self.collect_parents(id)?.into_iter().map(|e| e.0).collect();
+
+                self.topo_queue.push(
+                    parent_commit_time,
+                    Info {
+                        id: pid,
+                        parent_ids,
+                    },
+                );
             }
         }
 
@@ -558,19 +562,11 @@ where
             &mut self.buf,
         )
     }
-}
 
-#[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
-impl<Find> Iterator for Walk<Find>
-where
-    Find: gix_object::Find,
-{
-    type Item = Result<ObjectId, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn pop_commit(&mut self) -> Option<Result<Info, Error>> {
         let id = self.topo_queue.pop()?;
 
-        let i = match self.indegrees.get_mut(&id) {
+        let i = match self.indegrees.get_mut(&id.id) {
             Some(i) => i,
             None => {
                 return Some(Err(Error::MissingIndegree));
@@ -579,7 +575,7 @@ where
 
         *i = 0;
 
-        match self.expand_topo_walk(&id) {
+        match self.expand_topo_walk(&id.id) {
             Ok(_) => (),
             Err(e) => {
                 return Some(Err(e));
@@ -587,6 +583,28 @@ where
         };
 
         Some(Ok(id))
+    }
+}
+
+#[cfg_attr(feature = "trace", trace(prefix_enter = "", prefix_exit = ""))]
+impl<Find, Predicate> Iterator for Walk<Find, Predicate>
+where
+    Find: gix_object::Find,
+    Predicate: FnMut(&oid) -> bool,
+{
+    type Item = Result<Info, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.pop_commit()? {
+            Ok(id) => {
+                if (self.predicate)(&id.id) {
+                    Some(Ok(id))
+                } else {
+                    self.next()
+                }
+            }
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -794,8 +812,55 @@ mod tests {
             .build()
             .unwrap();
 
-        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
+        let ids = walk
+            .map(|i| i.map(|i| i.id))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         let git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
+
+        assert_eq!(
+            ids, git_ids,
+            "left = ids, right = git_ids, flags = {parents:?} {sorting:?}"
+        );
+    }
+
+    fn test_body_pred(
+        graph_setting: GraphSetting,
+        sorting: Sorting,
+        parents: Parents,
+        mut pred: impl FnMut(&oid) -> bool,
+        raw_specs: &[&str],
+    ) {
+        let store = gix_odb::at("../.git/objects").expect("find objects");
+        let specs = raw_specs
+            .iter()
+            .map(|s| simple_parse(*s))
+            .collect::<Vec<_>>();
+
+        let commit_graph = match graph_setting {
+            UseGraph => Some(
+                gix_commitgraph::at(store.store_ref().path().join("info"))
+                    .expect("commit graph available"),
+                // The Walk takes an Option, but if the commit graph isn't
+                // available I want to know immediately, hence the Some(...expect())
+            ),
+            NoGraph => None,
+        };
+
+        let walk = Builder::from_specs(&store, specs)
+            .with_commit_graph(commit_graph)
+            .sorting(sorting)
+            .parents(parents)
+            .with_predicate(&mut pred)
+            .build()
+            .unwrap();
+
+        let ids = walk
+            .map(|i| i.map(|i| i.id))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let mut git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
+        git_ids.retain(|e| (&mut pred)(e));
 
         assert_eq!(
             ids, git_ids,
@@ -812,6 +877,19 @@ mod tests {
             )]
             fn $test_name(graph_setting: GraphSetting, sorting: Sorting, parents: Parents) {
                 test_body(graph_setting, sorting, parents, &[$($spec),+]);
+            }
+        };
+    }
+
+    macro_rules! topo_test_with_predicate {
+        ($test_name:ident, $pred:expr, $($spec:literal),+) => {
+            #[test_matrix(
+                [ UseGraph, NoGraph ],
+                [ DateOrder, TopoOrder ],
+                [ All, First ]
+            )]
+            fn $test_name(graph_setting: GraphSetting, sorting: Sorting, parents: Parents) {
+                test_body_pred(graph_setting, sorting, parents, $pred, &[$($spec),+]);
             }
         };
     }
@@ -837,5 +915,11 @@ mod tests {
         "00491e237a24c20f81e3e7f7a37d6359f65617d0",
         "^3be8265bc3f7d982170bd475be3b82cb140643b9",
         "^bb482759d46e81f0f51d7845d86d2dae93b8b3da"
+    );
+
+    topo_test_with_predicate!(
+        basic_with_dummy_predicate,
+        |oid| oid != ObjectId::from_hex(b"bb8601cfa2f3bb33f9a8a9bdc4d66e3b598cddff").expect(""),
+        "b282e76b1322e1d26ef002968e1591bd8f22df96"
     );
 }
