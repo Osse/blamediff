@@ -6,12 +6,14 @@ edition = "2021"
 repository = "https://github.com/Osse/blamediff"
 license = "MIT OR Apache-2.0"
 description = "Obtains a blame record of a file in a Git repository"
-keywords = ["git", "gitoxide", "blame" ]
+keywords = ["git", "gitoxide", "blame"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gix = "*"
+gix = { path = "../../gitoxide/gix" }
+thiserror = "1.0.49"
+topo = { path = "../topo" }
 rangemap = "1.4.0"
 
 [dev-dependencies]
