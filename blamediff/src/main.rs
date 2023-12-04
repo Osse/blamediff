@@ -173,20 +173,26 @@ fn diff_two_trees(
         let path = c.location;
         if paths.is_empty() || paths.iter().any(|&p| p == path) {
             match c.event {
-                Addition {
-                    entry_mode: objs::tree::EntryMode::Blob,
-                    id,
-                } => diff_blob_with_null(id, c.location, false),
-                Deletion {
-                    entry_mode: objs::tree::EntryMode::Blob,
-                    id,
-                } => diff_blob_with_null(id, c.location, true),
+                Addition { entry_mode, id }
+                    if entry_mode.kind() == object::tree::EntryKind::Blob =>
+                {
+                    diff_blob_with_null(id, c.location, false)
+                }
+                Deletion { entry_mode, id }
+                    if entry_mode.kind() == object::tree::EntryKind::Blob =>
+                {
+                    diff_blob_with_null(id, c.location, true)
+                }
                 Modification {
-                    previous_entry_mode: objs::tree::EntryMode::Blob,
+                    previous_entry_mode,
                     previous_id,
-                    entry_mode: objs::tree::EntryMode::Blob,
+                    entry_mode,
                     id,
-                } => diff_two_blobs(previous_id, id, c.location),
+                } if entry_mode.kind() == object::tree::EntryKind::Blob
+                    && previous_entry_mode.kind() == object::tree::EntryKind::Blob =>
+                {
+                    diff_two_blobs(previous_id, id, c.location)
+                }
                 x => {
                     dbg!(x);
                     Ok(())

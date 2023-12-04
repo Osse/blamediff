@@ -1,6 +1,6 @@
 #[derive(Debug)]
 pub enum BlameDiffError {
-    FindObject(gix::odb::find::existing::Error),
+    FindObject(gix::object::find::existing::Error),
     StrUtf8Error(std::str::Utf8Error),
     ParseSingle(gix::revision::spec::parse::single::Error),
     InvalidRange,
@@ -25,6 +25,6 @@ macro_rules! make_error {
         }
     };
 }
-make_error![gix::odb::find::existing::Error, FindObject];
+make_error![gix::object::find::existing::Error, FindObject];
 make_error![std::str::Utf8Error, StrUtf8Error];
 make_error![gix::revision::spec::parse::single::Error, ParseSingle];
