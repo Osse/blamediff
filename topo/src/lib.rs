@@ -772,9 +772,8 @@ mod tests {
 
         let output = std::process::Command::new("git")
             .args(git_flags)
-            .arg("log")
+            .args(&["rev-list", "--parents"])
             .args(rev_list_flags)
-            .arg("--pretty=format:%H %P")
             .args(specs)
             .output()
             .expect("able to run git rev-list")
@@ -784,7 +783,6 @@ mod tests {
             .expect("sensible output from git rev-list")
             .split_terminator('\n')
             .map(|l| {
-                dbg!(l);
                 let mut l = l.split_ascii_whitespace();
                 Info {
                     id: ObjectId::from_str(l.next().expect("at least one object id"))
