@@ -476,7 +476,11 @@ where
             *i -= 1;
 
             if *i == 1 {
-                let parent_ids = self.collect_parents(id)?.into_iter().map(|e| e.0).collect();
+                let parent_ids = self
+                    .collect_all_parents(&pid)?
+                    .into_iter()
+                    .map(|e| e.0)
+                    .collect();
 
                 self.topo_queue.push(
                     parent_commit_time,
@@ -753,7 +757,7 @@ mod tests {
         sorting: Sorting,
         parents: Parents,
         specs: &[&str],
-    ) -> Vec<ObjectId> {
+    ) -> Vec<Info> {
         let git_flags = match graph_setting {
             UseGraph => &["-c", "core.commitGraph=true"],
             NoGraph => &["-c", "core.commitGraph=false"],
@@ -768,8 +772,9 @@ mod tests {
 
         let output = std::process::Command::new("git")
             .args(git_flags)
-            .arg("rev-list")
+            .arg("log")
             .args(rev_list_flags)
+            .arg("--pretty=format:%H %P")
             .args(specs)
             .output()
             .expect("able to run git rev-list")
@@ -778,9 +783,19 @@ mod tests {
         std::str::from_utf8(&output)
             .expect("sensible output from git rev-list")
             .split_terminator('\n')
-            .map(ObjectId::from_str)
-            .collect::<Result<Vec<_>, _>>()
-            .expect("rev-list returns valid object ids")
+            .map(|l| {
+                dbg!(l);
+                let mut l = l.split_ascii_whitespace();
+                Info {
+                    id: ObjectId::from_str(l.next().expect("at least one object id"))
+                        .expect("rev-list returns valid object ids"),
+                    parent_ids: l
+                        .map(ObjectId::from_str)
+                        .collect::<Result<SmallVec<_>, _>>()
+                        .expect("rev-list returns valid object ids"),
+                }
+            })
+            .collect::<Vec<_>>()
     }
 
     fn test_body(
@@ -812,10 +827,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let ids = walk
-            .map(|i| i.map(|i| i.id))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
         let git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
 
         assert_eq!(
@@ -855,12 +867,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let ids = walk
-            .map(|i| i.map(|i| i.id))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let ids = walk.collect::<Result<Vec<_>, _>>().unwrap();
         let mut git_ids = git_rev_list(graph_setting, sorting, parents, raw_specs);
-        git_ids.retain(|e| (&mut pred)(e));
+        git_ids.retain(|e| (&mut pred)(&e.id));
 
         assert_eq!(
             ids, git_ids,
@@ -919,7 +928,13 @@ mod tests {
 
     topo_test_with_predicate!(
         basic_with_dummy_predicate,
-        |oid| oid != ObjectId::from_hex(b"bb8601cfa2f3bb33f9a8a9bdc4d66e3b598cddff").expect(""),
+        |oid| oid != ObjectId::from_str("bb8601cfa2f3bb33f9a8a9bdc4d66e3b598cddff").unwrap(),
         "b282e76b1322e1d26ef002968e1591bd8f22df96"
+    );
+
+    topo_test!(
+        kekek,
+        "bb8601cfa2f3bb33f9a8a9bdc4d66e3b598cddff",
+        "^616867d9e3b817f505d4044ee3d81cfd348d579f"
     );
 }
