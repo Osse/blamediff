@@ -1,15 +1,21 @@
 use std::path::Path;
 
 mod common;
+use pretty_assertions::assert_eq;
+use test_case::test_matrix;
 
 macro_rules! blame_test {
     ($test_name:ident, $range:literal) => {
-        #[test]
-        fn $test_name() {
+        #[test_matrix( [ culpa::Parents::All, culpa::Parents::First ])]
+        fn $test_name(parents: culpa::Parents) {
             let r = gix::discover(".").unwrap();
-            let blame = culpa::blame_file(&r, $range, false, &Path::new(common::FILE)).unwrap();
-            let fasit = common::run_git_blame($range, &[]);
-            common::compare($range, blame.blamed_lines(), fasit);
+            let blame = culpa::blame_file(&r, $range, parents, &Path::new(common::FILE)).unwrap();
+            let git_blame = common::run_git_blame($range, parents);
+            assert_eq!(
+                blame.blamed_lines(),
+                git_blame,
+                "left = blame, right = git_blame, flags = {parents:?}"
+            );
         }
     };
 }

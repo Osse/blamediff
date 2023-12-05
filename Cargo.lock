@@ -300,6 +300,7 @@ dependencies = [
  "gix",
  "pretty_assertions",
  "rangemap",
+ "test-case",
  "thiserror",
  "topo",
 ]

@@ -1,16 +1,23 @@
+use std::str::FromStr;
+
 use culpa::*;
-use pretty_assertions::assert_eq;
 
 pub const FILE: &str = "lorem-ipsum.txt";
 
 // Return list of strings in the format "SHA1 SP true/false SP <line contents>"
-pub fn run_git_blame(revision: &str, args: &[&str]) -> Vec<String> {
+pub fn run_git_blame(revision: &str, parents: Parents) -> Vec<BlamedLine> {
+    let blame_flags: &[&str] = match parents {
+        Parents::All => &[],
+        Parents::First => &["--first-parent"],
+    };
+
     let output = std::process::Command::new("git")
-        .args(["-C", "..", "blame"])
-        .args(args)
+        .args(["-C", ".."])
+        .arg("blame")
+        .args(blame_flags)
         .args(["--line-porcelain", revision, FILE])
         .output()
-        .expect("able to run git blame")
+        .expect("able to run git rev-list")
         .stdout;
 
     let output = std::str::from_utf8(&output).expect("valid UTF-8");
@@ -51,44 +58,13 @@ pub fn run_git_blame(revision: &str, args: &[&str]) -> Vec<String> {
         .chunks(13)
         .map(|c| {
             let s = c[0].split_ascii_whitespace().collect::<Vec<&str>>();
-            format!(
-                "{} {} {} {}",
-                s[0],
-                s[1],
-                c[10].starts_with("boundary"),
-                &c[12][1..]
-            )
+            BlamedLine {
+                id: gix::ObjectId::from_str(s[0]).expect("Valid id"),
+                orig_line_no: s[1].parse().expect("valid"),
+                line_no: s[2].parse().expect("valid"),
+                boundary: c[10].starts_with("boundary"),
+                line: c[12][1..].to_owned(),
+            }
         })
         .collect()
-}
-
-pub fn compare(range: &str, blame: Vec<BlamedLine>, fasit: Vec<String>) {
-    let sha1 = range.find('.').map(|p| &range[p + 2..]).unwrap_or(range);
-    let blob = sha1.to_string() + ":" + FILE;
-
-    let output = std::process::Command::new("git")
-        .args(["show", &blob])
-        .output()
-        .expect("able to run git show")
-        .stdout;
-
-    let contents = std::str::from_utf8(&output).expect("valid UTF-8");
-
-    // Create a Vec of Strings similar to the one obtained from git itself.
-    // This with pretty assertions makes it much more pleasant to debug
-    let blame: Vec<String> = blame
-        .into_iter()
-        .zip(contents.lines())
-        .map(|(bl, line)| {
-            format!(
-                "{} {} {} {}",
-                bl.id.to_string(),
-                bl.orig_line_no,
-                bl.boundary,
-                line
-            )
-        })
-        .collect();
-
-    assert_eq!(fasit, blame);
 }

@@ -14,8 +14,20 @@ use crate::{
     Result,
 };
 
+/// Specify how to handle commit parents during traversal.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum Parents {
+    /// Traverse all parents, useful for traversing the entire ancestry.
+    #[default]
+    All,
+
+    ///Only traverse along the first parent, which commonly ignores all branches.
+    First,
+}
+
 ///  A line from the input file with blame information.
-pub struct BlamedLine<'a> {
+#[derive(Debug, PartialEq)]
+pub struct BlamedLine {
     /// The ID of the commit to blame for this line
     pub id: ObjectId,
 
@@ -29,7 +41,7 @@ pub struct BlamedLine<'a> {
     pub orig_line_no: u32,
 
     /// The line contents themselves
-    pub line: &'a str,
+    pub line: String,
 }
 
 /// A Blame represents a list of blamed lines in a file. Conceptually it's a
@@ -59,7 +71,7 @@ impl Blame {
                     boundary: *boundary,
                     line_no: line_no + 1,
                     orig_line_no: *orig_line_no + 1,
-                    line,
+                    line: line.to_owned(),
                 },
             )
             .collect()
@@ -139,7 +151,6 @@ impl IncompleteBlame {
         self.raw_assign(self.total_range.clone(), true, id);
 
         let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
-        dbg!(&line_tracker);
         // First remove anything that has already been assigned to this id
         // because it would have been assigned with boundary = false
 
@@ -237,7 +248,7 @@ fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool>
 pub fn blame_file(
     repo: &Repository,
     revision: &str,
-    first_parent: bool,
+    parents: Parents,
     path: &Path,
 ) -> Result<Blame> {
     let range = repo.rev_parse(revision)?.detach();
@@ -250,17 +261,14 @@ pub fn blame_file(
         _ => return Err(error::Error::InvalidRange),
     };
 
-    let rev_walker = {
-        let r = repo
-            .rev_walk(std::iter::once(start.id()))
-            .sorting(gix::traverse::commit::Sorting::BreadthFirst);
-
-        if first_parent {
-            r.first_parent_only()
-        } else {
-            r
-        }
-    };
+    let rev_walker = topo::Builder::from_specs(&repo.objects, std::iter::once(range))
+        .with_commit_graph(repo.commit_graph().ok())
+        .sorting(topo::Sorting::TopoOrder)
+        .parents(match parents {
+            Parents::First => topo::Parents::First,
+            Parents::All => topo::Parents::All,
+        })
+        .build()?;
 
     let mut buf = Vec::<u8>::new();
     let start_id = start.id;
@@ -275,28 +283,22 @@ pub fn blame_file(
 
     let mut blame_state = IncompleteBlame::new(contents, start_id);
 
-    let commits = if let Some(end) = end {
-        rev_walker.selected(move |o| end.as_ref() != o)?
-    } else {
-        rev_walker.all()?
-    }
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .expect("Able to collect all history");
-    dbg!(&commits);
+    let commits = rev_walker
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("Able to collect all history");
 
     for commit_info in &commits {
         let commit = commit_info.id;
         let entry = tree_entry(repo, commit, path)?;
 
         let line_tracker = blame_state.line_trackers.get(&commit).unwrap().clone();
-        dbg!(commit_info.id, &line_tracker);
 
         match commit_info.parent_ids.len() {
             0 => {
                 // Root commit (or end of range). Treat as boundary
                 blame_state.assign_as_boundary(commit_info.id);
             }
-            1 => {
+            n if n == 1 || matches!(parents, Parents::First) => {
                 let prev_commit = commit_info.parent_ids[0];
                 let prev_entry = tree_entry(repo, prev_commit, path)?;
 
