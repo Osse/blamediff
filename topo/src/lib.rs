@@ -109,13 +109,6 @@ impl Queue {
         }
     }
 
-    fn peek(&self) -> Option<&Info> {
-        match self {
-            Self::Date(q) => q.peek().map(|(_, id)| id),
-            Self::Topo(q) => q.last(),
-        }
-    }
-
     fn pop(&mut self) -> Option<Info> {
         match self {
             Self::Date(q) => q.pop().map(|(_, id)| id),

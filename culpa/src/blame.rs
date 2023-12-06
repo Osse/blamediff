@@ -169,7 +169,7 @@ impl IncompleteBlame {
     }
 
     fn process(&mut self, ranges: &[BeforeAfter], id: ObjectId) {
-        for BeforeAfter { before, after } in ranges.iter().cloned() {
+        for BeforeAfter { before: _, after } in ranges.iter().cloned() {
             let line_tracker = self.line_trackers.get(&id).expect("have line mapping");
             let true_ranges = line_tracker.get_current_lines(after.clone());
             for r in true_ranges {
@@ -232,7 +232,7 @@ fn diff_tree_entries(
     ))
 }
 
-fn disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool> {
+fn _disk_newer_than_index(stat: &index::entry::Stat, path: &Path) -> Result<bool> {
     let fs_stat = std::fs::symlink_metadata(path)?;
 
     let mod_secs = fs_stat
@@ -309,7 +309,6 @@ pub fn blame_file(
 
                         match blame_state.line_trackers.entry(prev_commit) {
                             std::collections::hash_map::Entry::Occupied(mut o) => {
-                                dbg!("merging", prev_commit);
                                 o.get_mut().merge_mapping(&changes.line_tracker);
                             }
                             std::collections::hash_map::Entry::Vacant(v) => {
